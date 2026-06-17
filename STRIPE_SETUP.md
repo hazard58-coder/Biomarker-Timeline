@@ -51,20 +51,30 @@ Railway redeploys when you save. Once `STRIPE_SECRET_KEY` is set, `/app` shows a
 4. You're redirected back to `/app` with the upload form. Upload labs and confirm
    a report downloads. (No real money moves in test mode.)
 
-## 5. (Optional) Use a saved Price instead of the inline $79
-Only if you'd rather manage the price in Stripe's catalog:
-1. **Product catalog → Add product**, set a **one-time** price of $79.
-2. Copy the **Price ID** (`price_…`).
-3. Add Railway variable `STRIPE_PRICE_ID` = that `price_…`.
+## 5. (Optional) Use saved Prices instead of the inline amounts
+Only if you'd rather manage prices in Stripe's catalog:
+1. **Product catalog → Add product.**
+   - For the one-time report, add a **one-time** $79 price → copy its `price_…`
+     into Railway as `STRIPE_PRICE_ID`.
+   - For the subscription, add a **recurring / monthly** $29 price → copy its
+     `price_…` into Railway as `STRIPE_SUBSCRIPTION_PRICE_ID`.
+2. Without these, the app uses inline prices (`REPORT_PRICE_CENTS` /
+   `SUBSCRIPTION_PRICE_CENTS`, default $79 / $29).
+
+### The two plans on `/app`
+With Stripe configured, the paywall offers both: **Pay $79** (one-time, one
+report) and **Subscribe $29/mo** (recurring, ongoing updates). The monthly plan
+uses Stripe's subscription mode, so you're billed monthly automatically. The
+one-time plan is metered to one report; the subscription is not.
 
 ## 6. Go live
 1. Flip the dashboard from **Test** to **Live** and finish account activation
    (business details + bank account for payouts).
 2. Copy your **live** secret key (`sk_live_…`) from **Developers → API keys** in
    live mode.
-3. In Railway, replace `STRIPE_SECRET_KEY` with the `sk_live_…` key (and
-   `STRIPE_PRICE_ID` with the live Price ID if you used one — test and live IDs
-   differ).
+3. In Railway, replace `STRIPE_SECRET_KEY` with the `sk_live_…` key (and, if you
+   used saved Prices, replace `STRIPE_PRICE_ID` / `STRIPE_SUBSCRIPTION_PRICE_ID`
+   with their live `price_…` IDs — test and live IDs differ).
 4. Make one real $79 purchase to confirm, then refund it from the dashboard if
    you like.
 
@@ -95,8 +105,10 @@ code?"** on `/app` and skip payment. Codes and Stripe can run at the same time.
 | `STRIPE_SECRET_KEY` | for payments | Enables Stripe Checkout |
 | `GATE_SECRET` | yes in production | Signs the access cookie |
 | `APP_BASE_URL` | recommended | Public origin for Stripe return URLs |
-| `STRIPE_PRICE_ID` | optional | Use a catalog Price instead of inline $79 |
-| `REPORT_PRICE_CENTS` | optional | Inline price in cents (default `7900`) |
+| `STRIPE_PRICE_ID` | optional | Catalog Price for the one-time report (else inline $79) |
+| `REPORT_PRICE_CENTS` | optional | Inline one-time price in cents (default `7900`) |
+| `STRIPE_SUBSCRIPTION_PRICE_ID` | optional | Recurring Price for the $29/mo plan (else inline) |
+| `SUBSCRIPTION_PRICE_CENTS` | optional | Inline monthly price in cents (default `2900`) |
 | `ACCESS_CODES` | optional | Comp/trial codes |
 | `ACCESS_TTL_SECONDS` | optional | Access cookie length (default `7200`) |
 | `ENTITLEMENT_DB` | optional | SQLite path for consumed-payment records (default `data/entitlements.db`; point at a Railway volume for durability) |

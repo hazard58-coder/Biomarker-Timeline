@@ -162,11 +162,21 @@ def _paywall(canceled: bool = False, error: str | None = None) -> str:
     if gate.stripe_configured():
         pay_block = f"""
         <div class="card">
-          <label class="fld">One report</label>
+          <label class="fld">One report — {gate.price_display()} one-time</label>
           <p style="margin:2px 0 14px;font-size:15px;">A single Biomarker Timeline
             report built from the lab PDFs you upload.</p>
           <form action="/checkout" method="post" style="margin:0;">
+            <input type="hidden" name="plan" value="once"/>
             <button class="btn" type="submit">Pay {gate.price_display()} &amp; continue</button>
+          </form>
+        </div>
+        <div class="card">
+          <label class="fld">Keep it updated — {gate.subscription_price_display()} / month</label>
+          <p style="margin:2px 0 14px;font-size:15px;">A subscription that keeps your
+            timeline updated with each new draw. Cancel anytime.</p>
+          <form action="/checkout" method="post" style="margin:0;">
+            <input type="hidden" name="plan" value="monthly"/>
+            <button class="btn" type="submit">Subscribe {gate.subscription_price_display()}/mo &amp; continue</button>
           </form>
           <p class="hintrow">Secure checkout via Stripe. You'll come right back here
             to upload your labs.</p>
@@ -280,10 +290,10 @@ def _has_access() -> bool:
     return gate.token_is_valid(request.cookies.get(gate.COOKIE_NAME))
 
 
-def _grant_cookie(resp: Response, kind: str, ref: str) -> Response:
+def _grant_cookie(resp: Response, kind: str, ref: str, plan: str | None = None) -> Response:
     secure = _base_url().startswith("https")
     resp.set_cookie(
-        gate.COOKIE_NAME, gate.issue_token(kind, ref),
+        gate.COOKIE_NAME, gate.issue_token(kind, ref, plan),
         max_age=gate.ACCESS_TTL_SECONDS, httponly=True, secure=secure, samesite="Lax",
     )
     return resp
@@ -321,9 +331,11 @@ def upload_page() -> Response:
 
     # Returning from a successful Stripe Checkout.
     session_id = request.args.get("session_id")
-    if session_id and gate.stripe_configured() and gate.session_is_paid(session_id):
-        resp = make_response(_upload_form())
-        return _grant_cookie(resp, "stripe", session_id)
+    if session_id and gate.stripe_configured():
+        active, plan = gate.checkout_session_status(session_id)
+        if active:
+            resp = make_response(_upload_form())
+            return _grant_cookie(resp, "stripe", session_id, plan)
 
     # Otherwise show the paywall.
     return Response(
@@ -337,8 +349,9 @@ def checkout() -> Response:
     if not gate.stripe_configured():
         return Response(_paywall(error="Online payment isn't configured yet."),
                         mimetype="text/html", status=400)
+    plan = "monthly" if request.form.get("plan") == "monthly" else "once"
     try:
-        url = gate.create_checkout_session(_base_url())
+        url = gate.create_checkout_session(_base_url(), plan)
     except Exception as exc:
         return Response(_paywall(error=f"Couldn't start checkout ({exc})."),
                         mimetype="text/html", status=502)
@@ -360,14 +373,15 @@ def generate() -> Response:
     if not _has_access():
         return redirect("/app", code=303)
 
-    # Strict one-report-per-payment: a Stripe-paid session may produce exactly
-    # one delivered report. (Trial-code access is operator-controlled and not
-    # metered here.) We check consumption up front, and only mark the session
-    # consumed AFTER a report is successfully delivered, so a self-check failure
-    # never burns the customer's payment.
+    # Strict one-report-per-payment for the ONE-TIME plan: a paid session may
+    # produce exactly one delivered report. The MONTHLY subscription is not
+    # metered (it covers ongoing updates), and trial-code access is
+    # operator-controlled. We check consumption up front, and only mark the
+    # session consumed AFTER a report is delivered, so a self-check failure never
+    # burns the customer's payment.
     payload = gate.read_token(request.cookies.get(gate.COOKIE_NAME))
     paid_session_id = None
-    if payload and payload.get("k") == "stripe":
+    if payload and payload.get("k") == "stripe" and payload.get("plan") != "sub":
         paid_session_id = payload.get("ref")
         if paid_session_id and store.is_consumed(paid_session_id):
             return Response(_already_used_page(), mimetype="text/html", status=403)

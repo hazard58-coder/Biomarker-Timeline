@@ -23,10 +23,12 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 COOKIE_NAME = "bt_access"
 
 # --- configuration (read once at import) ---
-REPORT_PRICE_CENTS = int(os.environ.get("REPORT_PRICE_CENTS", "7900"))  # $79.00
+REPORT_PRICE_CENTS = int(os.environ.get("REPORT_PRICE_CENTS", "7900"))  # $79.00 one-time
+SUBSCRIPTION_PRICE_CENTS = int(os.environ.get("SUBSCRIPTION_PRICE_CENTS", "2900"))  # $29.00/mo
 ACCESS_CODES = {c.strip() for c in os.environ.get("ACCESS_CODES", "").split(",") if c.strip()}
 STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "").strip()
-STRIPE_PRICE_ID = os.environ.get("STRIPE_PRICE_ID", "").strip()
+STRIPE_PRICE_ID = os.environ.get("STRIPE_PRICE_ID", "").strip()  # one-time Price (optional)
+STRIPE_SUBSCRIPTION_PRICE_ID = os.environ.get("STRIPE_SUBSCRIPTION_PRICE_ID", "").strip()  # recurring Price (optional)
 ACCESS_TTL_SECONDS = int(os.environ.get("ACCESS_TTL_SECONDS", str(2 * 60 * 60)))  # 2 hours
 _GATE_SECRET = (os.environ.get("GATE_SECRET")
                 or os.environ.get("SECRET_KEY")
@@ -48,16 +50,24 @@ def codes_configured() -> bool:
     return bool(ACCESS_CODES)
 
 
-def price_display() -> str:
-    dollars = REPORT_PRICE_CENTS / 100
+def _money(cents: int) -> str:
+    dollars = cents / 100
     return f"${dollars:,.0f}" if dollars == int(dollars) else f"${dollars:,.2f}"
 
 
+def price_display() -> str:
+    return _money(REPORT_PRICE_CENTS)
+
+
+def subscription_price_display() -> str:
+    return _money(SUBSCRIPTION_PRICE_CENTS)
+
+
 # --- access tokens (signed cookie) ---
-def issue_token(kind: str, ref: str) -> str:
+def issue_token(kind: str, ref: str, plan: str | None = None) -> str:
     """Mint an access token. `kind` is 'stripe' or 'code'; `ref` is the session
-    id or code label, recorded for traceability."""
-    return _serializer.dumps({"k": kind, "ref": ref})
+    id or code label; `plan` is 'once' or 'sub' for Stripe access (None for codes)."""
+    return _serializer.dumps({"k": kind, "ref": ref, "plan": plan})
 
 
 def token_is_valid(token: str | None) -> bool:
@@ -80,31 +90,50 @@ def code_is_valid(code: str | None) -> bool:
 
 
 # --- Stripe Checkout ---
-def create_checkout_session(base_url: str) -> str:
+def create_checkout_session(base_url: str, plan: str = "once") -> str:
     """Create a Stripe Checkout Session and return its hosted URL.
 
-    `base_url` is the public origin (e.g. https://yourapp.up.railway.app), used
-    to build the success/cancel return URLs.
+    `plan` is 'once' (one-time $79 report) or 'monthly' (recurring $29/mo).
+    `base_url` is the public origin, used to build the success/cancel URLs.
     """
     import stripe
 
     stripe.api_key = STRIPE_SECRET_KEY
-    if STRIPE_PRICE_ID:
-        line_item = {"price": STRIPE_PRICE_ID, "quantity": 1}
-    else:
-        line_item = {
-            "quantity": 1,
-            "price_data": {
-                "currency": "usd",
-                "unit_amount": REPORT_PRICE_CENTS,
-                "product_data": {
-                    "name": "Biomarker Timeline — one report",
-                    "description": "A single data-organization report from your lab PDFs.",
+    if plan == "monthly":
+        mode = "subscription"
+        if STRIPE_SUBSCRIPTION_PRICE_ID:
+            line_item = {"price": STRIPE_SUBSCRIPTION_PRICE_ID, "quantity": 1}
+        else:
+            line_item = {
+                "quantity": 1,
+                "price_data": {
+                    "currency": "usd",
+                    "unit_amount": SUBSCRIPTION_PRICE_CENTS,
+                    "recurring": {"interval": "month"},
+                    "product_data": {
+                        "name": "Biomarker Timeline — monthly",
+                        "description": "Keep your timeline updated with each new draw.",
+                    },
                 },
-            },
-        }
+            }
+    else:
+        mode = "payment"
+        if STRIPE_PRICE_ID:
+            line_item = {"price": STRIPE_PRICE_ID, "quantity": 1}
+        else:
+            line_item = {
+                "quantity": 1,
+                "price_data": {
+                    "currency": "usd",
+                    "unit_amount": REPORT_PRICE_CENTS,
+                    "product_data": {
+                        "name": "Biomarker Timeline — one report",
+                        "description": "A single data-organization report from your lab PDFs.",
+                    },
+                },
+            }
     session = stripe.checkout.Session.create(
-        mode="payment",
+        mode=mode,
         line_items=[line_item],
         success_url=f"{base_url}/app?session_id={{CHECKOUT_SESSION_ID}}",
         cancel_url=f"{base_url}/app?canceled=1",
@@ -112,13 +141,32 @@ def create_checkout_session(base_url: str) -> str:
     return session.url
 
 
-def session_is_paid(session_id: str) -> bool:
-    """Verify a returned Checkout Session was actually paid (live API call)."""
+def checkout_session_status(session_id: str) -> tuple[bool, str]:
+    """Verify a returned Checkout Session (live API call).
+
+    Returns (active, plan) where plan is 'once' or 'sub'. For one-time payments,
+    active means the payment is paid. For subscriptions, active means the first
+    invoice is paid and the subscription is in an active/trialing state.
+    """
     import stripe
 
     stripe.api_key = STRIPE_SECRET_KEY
     try:
         session = stripe.checkout.Session.retrieve(session_id)
     except Exception:
-        return False
-    return session.get("payment_status") == "paid"
+        return False, "once"
+
+    if session.get("mode") == "subscription":
+        if session.get("payment_status") != "paid":
+            return False, "sub"
+        sub_id = session.get("subscription")
+        if not sub_id:
+            return False, "sub"
+        try:
+            sub = stripe.Subscription.retrieve(sub_id)
+            return sub.get("status") in ("active", "trialing"), "sub"
+        except Exception:
+            # First invoice paid but couldn't load the subscription — treat as active.
+            return True, "sub"
+
+    return session.get("payment_status") == "paid", "once"

@@ -180,8 +180,10 @@ granted with a signed, time-limited cookie.
 | Variable | What it does |
 |----------|--------------|
 | `STRIPE_SECRET_KEY` | Enables Stripe Checkout. Visitors pay before they can upload. |
-| `STRIPE_PRICE_ID` | *(optional)* Use a specific Stripe Price; otherwise an inline `$79` one-time price is used. |
-| `REPORT_PRICE_CENTS` | *(optional)* Inline price in cents (default `7900` = $79). |
+| `STRIPE_PRICE_ID` | *(optional)* Use a specific Stripe Price for the one-time report; otherwise an inline `$79` price is used. |
+| `REPORT_PRICE_CENTS` | *(optional)* Inline one-time price in cents (default `7900` = $79). |
+| `STRIPE_SUBSCRIPTION_PRICE_ID` | *(optional)* Use a specific recurring Stripe Price for the `$29/mo` plan; otherwise an inline monthly price is used. |
+| `SUBSCRIPTION_PRICE_CENTS` | *(optional)* Inline monthly price in cents (default `2900` = $29). |
 | `ACCESS_CODES` | Comma-separated comp/trial codes (e.g. `TRIAL50,FRIEND`). Hand these out for the free or half-price trial reports. |
 | `APP_BASE_URL` | *(optional)* Public origin for Stripe return URLs, e.g. `https://yourapp.up.railway.app`. Auto-derived from the request if unset. |
 | `GATE_SECRET` | Secret used to sign access cookies. **Set this in production** to a long random string. |
@@ -189,8 +191,19 @@ granted with a signed, time-limited cookie.
 | `ENTITLEMENT_DB` | *(optional)* Path to the SQLite store that records consumed payments (default `data/entitlements.db`). |
 
 - Set **`STRIPE_SECRET_KEY`** to charge for reports, **`ACCESS_CODES`** to hand out
-  trials, or **both** (the paywall shows a Pay button *and* a code field).
+  trials, or **both** (the paywall shows the Pay options *and* a code field).
 - Set **neither** and `/app` stays open.
+- With Stripe configured, `/app` offers **both** plans: a one-time **$79** report
+  and a recurring **$29/mo** subscription. The one-time plan is metered to one
+  report (above); the subscription is **not** metered — it covers ongoing updates.
+
+> **Returning subscribers:** access is held in the signed cookie for
+> `ACCESS_TTL_SECONDS` (2 h). After it expires, a subscriber re-uploading a new
+> draw would need a fresh entry point — there is no customer login. For monthly
+> delivery, either re-run the tool for them via the CLI (see `OPERATIONS.md`) or
+> hand them an `ACCESS_CODES` value. A full self-serve customer portal (Stripe
+> Billing portal + accounts) is the natural next step if you want subscribers to
+> return and generate on their own indefinitely.
 
 > **Strict one report per payment.** Each Stripe payment yields exactly one
 > delivered report. Stripe is the source of truth for whether a session was paid

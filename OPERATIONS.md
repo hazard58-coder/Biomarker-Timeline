@@ -113,14 +113,22 @@ Once you've verified, re-run. When it's all PASS, the PDF is safe to deliver.
 
 | Offer | Price | How |
 |-------|-------|-----|
-| One report | **$79** one-time | Stripe Checkout on `/app`, or invoice manually |
-| Keep it updated each draw | **$29 / month** | Handle by subscription/invoice; re-run the tool each new draw |
-| Trial (free or half-price) | your call | Hand out an `ACCESS_CODES` code, or just run it on the CLI |
+| One report | **$79** one-time | Stripe Checkout on `/app` (metered to one report) |
+| Keep it updated each draw | **$29 / month** | Stripe subscription on `/app` (recurring billing) |
+| Trial (free or half-price) | your call | Hand out an `ACCESS_CODES` code, or run the CLI |
 
-The subscription ($29/mo) isn't automated in the tool — set it up as a Stripe
-subscription or recurring invoice, and each time the client sends a new draw,
-re-run the pipeline (add the new PDF alongside the old ones in `input/`) and send
-the updated report.
+Both plans are now self-serve on `/app`: the one-time **$79** report and the
+recurring **$29/mo** subscription (real Stripe recurring billing — you're paid
+monthly automatically). The one-time plan yields exactly one report; the
+subscription is unmetered.
+
+**Delivering ongoing updates to a subscriber.** There's no customer login yet, so
+once a subscriber's access cookie expires (2 h) they can't return on their own and
+re-generate. For each new draw, either: re-run the pipeline for them via the CLI
+(add the new PDF alongside the old ones in `input/`, re-run, send the updated
+report), or hand them an `ACCESS_CODES` value so they can re-upload themselves.
+A full self-serve customer portal is the natural next step if you want subscribers
+to come back and generate indefinitely without you in the loop.
 
 ---
 
