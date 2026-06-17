@@ -33,8 +33,11 @@ from flask import (  # noqa: E402
 from werkzeug.utils import secure_filename  # noqa: E402
 
 import gate  # noqa: E402
+import mailer  # noqa: E402
 import store  # noqa: E402
 from biomarker_timeline.pipeline import run_pipeline  # noqa: E402
+
+ACCOUNT_COOKIE = "bt_account"
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 40 * 1024 * 1024  # 40 MB total upload cap
@@ -128,6 +131,10 @@ def _upload_form(error: str | None = None) -> str:
     err_html = ""
     if error:
         err_html = f'<div class="card err"><b>{error}</b></div>'
+    portal_link = ""
+    if _read_account():
+        portal_link = ('<p class="hintrow">Subscriber? '
+                       '<a href="/portal">Manage your subscription →</a></p>')
     return _page("Build your Biomarker Timeline", f"""
     <div class="spacer"></div>
     <div class="kicker">Biomarker Timeline</div>
@@ -149,6 +156,7 @@ def _upload_form(error: str | None = None) -> str:
       <button class="btn" type="submit">Generate my report</button>
       <p class="hintrow">This takes a few seconds while your charts render.</p>
     </form>
+    {portal_link}
     """)
 
 
@@ -194,6 +202,11 @@ def _paywall(canceled: bool = False, error: str | None = None) -> str:
           </form>
         </div>"""
 
+    signin = ""
+    if gate.stripe_configured():
+        signin = ('<p class="hintrow">Already on the monthly plan? '
+                  '<a href="/login">Sign in →</a></p>')
+
     no_purchase = ""
     if not gate.stripe_configured():
         no_purchase = ('<p>To purchase a report, email '
@@ -210,6 +223,7 @@ def _paywall(canceled: bool = False, error: str | None = None) -> str:
     {cancel_html}{err_html}
     {pay_block}
     {code_block}
+    {signin}
     {no_purchase}
     """)
 
@@ -246,6 +260,36 @@ def _already_used_page() -> str:
     <div class="spacer"></div>
     <p class="hintrow">If you think this is a mistake, email
       <a href="mailto:contact@vitalisforge.com">contact@vitalisforge.com</a>.</p>
+    """)
+
+
+def _signin_form(error: str | None = None) -> str:
+    err_html = f'<div class="card err"><b>{_escape(error)}</b></div>' if error else ""
+    return _page("Subscriber sign-in", f"""
+    <div class="spacer"></div>
+    <div class="kicker">Biomarker Timeline</div>
+    <h1 class="title">Subscriber sign-in.</h1>
+    <p>Already on the monthly plan? Enter the email you subscribed with and we'll
+      send you a sign-in link.</p>
+    <hr class="rule"/>
+    {err_html}
+    <form class="card" action="/login" method="post">
+      <label class="fld" for="email">Your email</label>
+      <input type="text" id="email" name="email" placeholder="you@example.com" required/>
+      <div class="spacer"></div>
+      <button class="btn" type="submit">Email me a sign-in link</button>
+    </form>
+    <p class="hintrow">Not a subscriber yet? <a href="/app">Get a report →</a></p>
+    """)
+
+
+def _info_page(title: str, message: str) -> str:
+    return _page(title, f"""
+    <div class="spacer"></div>
+    <div class="kicker">Biomarker Timeline</div>
+    <h1 class="title">{_escape(title)}</h1>
+    <p>{_escape(message)}</p>
+    <p><a href="/app">← Back</a></p>
     """)
 
 
@@ -299,6 +343,19 @@ def _grant_cookie(resp: Response, kind: str, ref: str, plan: str | None = None) 
     return resp
 
 
+def _set_account_cookie(resp: Response, customer_id: str, email: str) -> Response:
+    secure = _base_url().startswith("https")
+    resp.set_cookie(
+        ACCOUNT_COOKIE, gate.issue_account_token(customer_id, email),
+        max_age=gate.ACCOUNT_TTL_SECONDS, httponly=True, secure=secure, samesite="Lax",
+    )
+    return resp
+
+
+def _read_account() -> dict | None:
+    return gate.read_account_token(request.cookies.get(ACCOUNT_COOKIE))
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -332,10 +389,20 @@ def upload_page() -> Response:
     # Returning from a successful Stripe Checkout.
     session_id = request.args.get("session_id")
     if session_id and gate.stripe_configured():
-        active, plan = gate.checkout_session_status(session_id)
-        if active:
+        info = gate.checkout_session_info(session_id)
+        if info["active"]:
             resp = make_response(_upload_form())
-            return _grant_cookie(resp, "stripe", session_id, plan)
+            _grant_cookie(resp, "stripe", session_id, info["plan"])
+            # Subscribers get an account cookie so they can return + self-serve.
+            if info["plan"] == "sub" and info.get("customer"):
+                _set_account_cookie(resp, info["customer"], info.get("email") or "")
+            return resp
+
+    # Returning subscriber with a still-valid account cookie + active subscription.
+    acct = _read_account()
+    if acct and gate.stripe_configured() and gate.subscription_active(acct.get("cust")):
+        resp = make_response(_upload_form())
+        return _grant_cookie(resp, "stripe", f"acct:{acct.get('cust')}", "sub")
 
     # Otherwise show the paywall.
     return Response(
@@ -366,6 +433,76 @@ def unlock() -> Response:
         return _grant_cookie(resp, "code", code.strip())
     return Response(_paywall(error="That code wasn't recognized."),
                     mimetype="text/html", status=403)
+
+
+@app.get("/login")
+def login_page() -> Response:
+    return Response(_signin_form(), mimetype="text/html")
+
+
+@app.post("/login")
+def login() -> Response:
+    email = (request.form.get("email") or "").strip()
+    # Always show the same confirmation, so we never reveal who has a subscription.
+    sent_page = _info_page(
+        "Check your email",
+        "If that address has an active subscription, a sign-in link is on its way. "
+        "The link works for 30 minutes.")
+
+    if not email or not gate.stripe_configured():
+        return Response(sent_page, mimetype="text/html")
+
+    customer_id = gate.find_active_subscription_customer(email)
+    if customer_id and mailer.mail_configured():
+        link = f"{_base_url()}/verify?token={gate.issue_magic_token(email)}"
+        try:
+            mailer.send_magic_link(email, link)
+        except Exception:
+            pass  # don't leak delivery state to the visitor
+    elif customer_id and not mailer.mail_configured():
+        # Subscription exists but we can't email — tell them how to reach a human.
+        return Response(_info_page(
+            "Almost there",
+            "You have an active subscription, but automated email isn't set up yet. "
+            "Email contact@vitalisforge.com and we'll send your sign-in link."),
+            mimetype="text/html")
+    return Response(sent_page, mimetype="text/html")
+
+
+@app.get("/verify")
+def verify() -> Response:
+    email = gate.read_magic_token(request.args.get("token"))
+    if not email:
+        return Response(_info_page(
+            "Link expired",
+            "That sign-in link is invalid or has expired. Request a new one."),
+            mimetype="text/html", status=400)
+    customer_id = gate.find_active_subscription_customer(email) if gate.stripe_configured() else None
+    if not customer_id:
+        return Response(_info_page(
+            "No active subscription",
+            "We couldn't find an active subscription for that address. If you think "
+            "this is a mistake, email contact@vitalisforge.com."),
+            mimetype="text/html", status=403)
+    resp = make_response(redirect("/app", code=303))
+    _grant_cookie(resp, "stripe", f"acct:{customer_id}", "sub")
+    _set_account_cookie(resp, customer_id, email)
+    return resp
+
+
+@app.get("/portal")
+def portal() -> Response:
+    acct = _read_account()
+    if not (acct and gate.stripe_configured()):
+        return redirect("/login", code=303)
+    try:
+        url = gate.create_billing_portal_session(acct.get("cust"), f"{_base_url()}/app")
+    except Exception:
+        return Response(_info_page(
+            "Couldn't open the billing portal",
+            "Please try again, or email contact@vitalisforge.com."),
+            mimetype="text/html", status=502)
+    return redirect(url, code=303)
 
 
 @app.post("/generate")

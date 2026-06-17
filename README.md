@@ -159,6 +159,8 @@ Routes:
 |-------|------------|
 | `/` | the public landing page (`landing.html`) |
 | `/app` | the upload tool — pick PDFs, optional name, get a report |
+| `/login` · `/verify` | subscriber sign-in via emailed magic link |
+| `/portal` | Stripe Billing customer portal (manage/cancel subscription) |
 | `/sample.pdf` | the finished sample report (so prospects can see a real one) |
 | `/healthz` | health check for Railway |
 
@@ -189,6 +191,9 @@ granted with a signed, time-limited cookie.
 | `GATE_SECRET` | Secret used to sign access cookies. **Set this in production** to a long random string. |
 | `ACCESS_TTL_SECONDS` | *(optional)* How long the access cookie lasts after payment/unlock (default `7200` = 2 h). |
 | `ENTITLEMENT_DB` | *(optional)* Path to the SQLite store that records consumed payments (default `data/entitlements.db`). |
+| `ACCOUNT_TTL_SECONDS` | *(optional)* How long a subscriber stays signed in (default `2592000` = 30 days). |
+| `MAGIC_LINK_TTL_SECONDS` | *(optional)* How long a sign-in link is valid (default `1800` = 30 min). |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USERNAME` / `SMTP_PASSWORD` / `MAIL_FROM` | Email settings for sending subscriber sign-in links. Without these, subscriber email sign-in is disabled (they're told to email you). |
 
 - Set **`STRIPE_SECRET_KEY`** to charge for reports, **`ACCESS_CODES`** to hand out
   trials, or **both** (the paywall shows the Pay options *and* a code field).
@@ -197,13 +202,14 @@ granted with a signed, time-limited cookie.
   and a recurring **$29/mo** subscription. The one-time plan is metered to one
   report (above); the subscription is **not** metered — it covers ongoing updates.
 
-> **Returning subscribers:** access is held in the signed cookie for
-> `ACCESS_TTL_SECONDS` (2 h). After it expires, a subscriber re-uploading a new
-> draw would need a fresh entry point — there is no customer login. For monthly
-> delivery, either re-run the tool for them via the CLI (see `OPERATIONS.md`) or
-> hand them an `ACCESS_CODES` value. A full self-serve customer portal (Stripe
-> Billing portal + accounts) is the natural next step if you want subscribers to
-> return and generate on their own indefinitely.
+> **Returning subscribers self-serve.** A subscriber stays signed in via a signed
+> account cookie for `ACCOUNT_TTL_SECONDS` (30 days) — when they come back, `/app`
+> re-checks their subscription live with Stripe and lets them generate again.
+> After that, or on a new device, they sign in at `/login`: they enter their email
+> and get a magic link (needs SMTP configured). They can manage or cancel the plan
+> at `/portal` (Stripe's Billing customer portal — enable it once in the Stripe
+> dashboard, see `STRIPE_SETUP.md`). Stripe is the source of truth for "is this
+> subscription active," so there are still no passwords or user database.
 
 > **Strict one report per payment.** Each Stripe payment yields exactly one
 > delivered report. Stripe is the source of truth for whether a session was paid

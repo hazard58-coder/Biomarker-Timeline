@@ -122,13 +122,13 @@ recurring **$29/mo** subscription (real Stripe recurring billing — you're paid
 monthly automatically). The one-time plan yields exactly one report; the
 subscription is unmetered.
 
-**Delivering ongoing updates to a subscriber.** There's no customer login yet, so
-once a subscriber's access cookie expires (2 h) they can't return on their own and
-re-generate. For each new draw, either: re-run the pipeline for them via the CLI
-(add the new PDF alongside the old ones in `input/`, re-run, send the updated
-report), or hand them an `ACCESS_CODES` value so they can re-upload themselves.
-A full self-serve customer portal is the natural next step if you want subscribers
-to come back and generate indefinitely without you in the loop.
+**Subscribers self-serve.** A subscriber stays signed in for 30 days; when they
+return, `/app` re-checks their subscription with Stripe and lets them generate
+again. On a new device or after that, they sign in at `/login` (email → magic
+link) and manage or cancel their plan at `/portal` (Stripe's billing portal).
+This needs email (SMTP) and the Stripe customer portal enabled — see
+`STRIPE_SETUP.md` §5b. If a subscriber ever can't get in, you can still run their
+report via the CLI or hand them an `ACCESS_CODES` value.
 
 ---
 

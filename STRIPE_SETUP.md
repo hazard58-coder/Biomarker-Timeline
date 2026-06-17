@@ -67,6 +67,24 @@ report) and **Subscribe $29/mo** (recurring, ongoing updates). The monthly plan
 uses Stripe's subscription mode, so you're billed monthly automatically. The
 one-time plan is metered to one report; the subscription is not.
 
+## 5b. Subscriber sign-in & the billing portal
+So monthly subscribers can come back and generate reports on their own:
+
+1. **Enable the Stripe Billing customer portal** (one time):
+   **Settings → Billing → Customer portal** → activate it (allow customers to
+   cancel/update). This is what `/portal` opens.
+2. **Set up email** so the app can send sign-in links. Add these Railway
+   variables (any SMTP provider — Gmail app password, Resend, SendGrid SMTP, etc.):
+   - `SMTP_HOST`, `SMTP_PORT` (default 587), `SMTP_USERNAME`, `SMTP_PASSWORD`
+   - `MAIL_FROM`, e.g. `Vitalis Forge <contact@vitalisforge.com>`
+
+How it works: a subscriber returns within 30 days → `/app` re-checks Stripe and
+just lets them in. On a new device or later, they go to `/login`, enter their
+email, and get a magic link (valid 30 min) that signs them in after the app
+re-confirms their subscription is active. They manage or cancel at `/portal`.
+Without SMTP configured, sign-in links can't be sent and returning subscribers
+are told to email you — everything else still works.
+
 ## 6. Go live
 1. Flip the dashboard from **Test** to **Live** and finish account activation
    (business details + bank account for payouts).
