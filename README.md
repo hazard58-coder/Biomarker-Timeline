@@ -53,6 +53,8 @@ found** (see [Stage 3](#stage-3--self-check-mandatory)).
 ```
 Biomarker-Timeline/
 ├── README.md                  ← you are here
+├── OPERATIONS.md              ← customer & operator flow guide (how a report gets made/delivered)
+├── STRIPE_SETUP.md            ← step-by-step: connect your Stripe account
 ├── PLAN.md                    ← 7-day launch plan
 ├── MESSAGES.md                ← 5 first-contact message templates
 ├── landing.html               ← single-file landing page
