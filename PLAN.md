@@ -23,7 +23,8 @@ The most honest test is your own bloodwork.
 ## Day 2 — Polish from your own notes (≈50 min)
 Fix only what made *your* report look unfinished.
 - [ ] If a marker didn't extract, check the self-check output and the source PDF.
-- [ ] Set your real CTA email in `landing.html` (search for `labs@vitalisforge.example`).
+- [ ] Confirm the CTA email in `landing.html` is your address (it ships set to
+      `contact@vitalisforge.com`).
 - [ ] Put your real two-line bio / brand promise at the top of the landing page.
 - [ ] Regenerate the sample if you changed anything: `python tools/make_sample.py`.
 

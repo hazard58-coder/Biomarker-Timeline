@@ -56,6 +56,8 @@ Biomarker-Timeline/
 ├── PLAN.md                    ← 7-day launch plan
 ├── MESSAGES.md                ← 5 first-contact message templates
 ├── landing.html               ← single-file landing page
+├── serve.py                   ← stdlib static server for the landing page (Railway)
+├── railway.json / nixpacks.toml / Procfile  ← Railway deploy config
 ├── requirements.txt
 ├── pyproject.toml
 ├── input/                     ← put a client's lab PDFs here
@@ -138,6 +140,39 @@ scratch (synthetic labs → full pipeline → finished PDF):
 
 ```bash
 python tools/make_sample.py
+```
+
+---
+
+## Deploy the landing page (Railway)
+
+The report tool is a local CLI script — it runs on your machine, not a server.
+The only web-facing piece is `landing.html`, and it's deployed on **Railway**
+(not Vercel or Supabase). It's served by `serve.py` using only the Python
+standard library — no web framework, no database, consistent with the rest of
+the project.
+
+**One-time deploy:**
+
+1. Push this repo to GitHub (already done if you're reading this on GitHub).
+2. In [Railway](https://railway.app), create a new project →
+   **Deploy from GitHub repo** → pick this repo.
+3. Railway reads `railway.json` / `nixpacks.toml` automatically, builds, and
+   starts `python serve.py`. No environment variables are required (Railway
+   provides `PORT`).
+4. Under the service's **Settings → Networking**, click **Generate Domain** to
+   get a public URL.
+
+That's it. The landing page is live, and the finished sample report is available
+at `/sample.pdf` so prospects can see a real example before they buy.
+
+> Prefer the Railway CLI? `npm i -g @railway/cli`, then `railway login` and
+> `railway up` from this folder.
+
+Run it locally first to check it:
+
+```bash
+python serve.py            # then open http://localhost:8080
 ```
 
 ---
