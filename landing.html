@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Biomarker Timeline — by Vitalis Forge</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=Oswald:wght@600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --obsidian:#0E0F12; --charcoal:#1B1E24; --copper:#B87333;
+    --gold:#C9A227; --ember:#C8602F; --offwhite:#ECEAE4; --muted:#9AA0A6;
+    --hairline:#2C313A;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--obsidian); color:var(--offwhite);
+    font-family:'Inter',system-ui,sans-serif; line-height:1.6; font-size:17px;
+  }
+  .wrap{max-width:760px; margin:0 auto; padding:0 24px;}
+  h1,h2,h3{font-family:'Oswald',sans-serif; letter-spacing:0.02em; margin:0;}
+  a{color:var(--gold);}
+
+  header{border-bottom:1px solid var(--hairline); padding:22px 0;}
+  .brand{display:flex; justify-content:space-between; align-items:baseline;}
+  .wordmark{font-family:'Oswald',sans-serif; font-weight:700; font-size:20px;
+    letter-spacing:0.18em; color:var(--copper);}
+  .brandtag{font-family:'Oswald',sans-serif; font-weight:600; font-size:11px;
+    letter-spacing:0.2em; color:var(--muted);}
+
+  .hero{padding:64px 0 40px;}
+  .kicker{font-family:'Oswald',sans-serif; font-weight:600; font-size:13px;
+    letter-spacing:0.24em; color:var(--gold); text-transform:uppercase;}
+  .hero h1{font-size:54px; line-height:1.02; font-weight:700; margin:14px 0 18px;}
+  .hero p.lead{font-size:20px; color:var(--offwhite); max-width:620px;}
+  .rule{border:0; border-top:2px solid var(--copper); margin:34px 0;}
+  .rule-thin{border:0; border-top:1px solid var(--hairline); margin:30px 0;}
+
+  section{padding:8px 0;}
+  h2{font-size:15px; letter-spacing:0.14em; text-transform:uppercase;
+    color:var(--copper); font-weight:600; margin-bottom:14px;}
+
+  ul.plain{list-style:none; padding:0; margin:0;}
+  ul.plain li{padding:10px 0 10px 26px; position:relative; border-bottom:1px solid var(--hairline);}
+  ul.plain li:before{content:"›"; position:absolute; left:4px; color:var(--copper); font-weight:700;}
+
+  .who li b{color:var(--gold);}
+
+  .price-row{display:flex; gap:18px; flex-wrap:wrap; margin-top:6px;}
+  .price-card{flex:1 1 240px; background:var(--charcoal); border:1px solid var(--hairline);
+    border-top:3px solid var(--copper); border-radius:4px; padding:22px 24px;}
+  .price-card .amt{font-family:'Oswald',sans-serif; font-weight:700; font-size:38px; color:var(--offwhite);}
+  .price-card .per{color:var(--muted); font-size:14px;}
+  .price-card .lbl{margin-top:6px; color:var(--offwhite);}
+
+  .cta{background:var(--charcoal); border:1px solid var(--hairline);
+    border-left:4px solid var(--gold); border-radius:4px; padding:26px 28px; margin:8px 0;}
+  .cta h3{font-size:24px; font-weight:700; margin-bottom:8px;}
+  .cta .email{display:inline-block; margin-top:10px; font-family:'Oswald',sans-serif;
+    font-weight:600; font-size:20px; letter-spacing:0.04em; color:var(--obsidian);
+    background:var(--gold); padding:12px 22px; border-radius:4px; text-decoration:none;}
+  .cta .note{color:var(--muted); font-size:14px; margin-top:12px;}
+
+  .disclaimer{background:var(--charcoal); border:1px solid var(--hairline);
+    border-top:3px solid var(--ember); border-radius:4px; padding:20px 24px; margin:6px 0 50px;}
+  .disclaimer h3{font-size:13px; letter-spacing:0.14em; color:var(--ember);
+    text-transform:uppercase; font-weight:700; margin-bottom:8px;}
+  .disclaimer p{font-size:14px; color:var(--offwhite); margin:0;}
+
+  footer{border-top:1px solid var(--hairline); padding:24px 0 60px; color:var(--muted); font-size:13px;}
+
+  @media (max-width:560px){ .hero h1{font-size:40px;} }
+</style>
+</head>
+<body>
+  <header>
+    <div class="wrap brand">
+      <span class="wordmark">VITALIS&nbsp;FORGE</span>
+      <span class="brandtag">WELLNESS · DATA</span>
+    </div>
+  </header>
+
+  <div class="wrap">
+    <div class="hero">
+      <div class="kicker">Biomarker Timeline</div>
+      <h1>See your own bloodwork,<br/>over time.</h1>
+      <p class="lead">You get labs every 8&ndash;12 weeks. They end up scattered
+        across PDFs and patient portals, and you can never line them up to see
+        the trend. Send me your lab PDFs and I&rsquo;ll send back one clean
+        report that charts every marker across every draw &mdash; built to print
+        and hand to your own doctor.</p>
+    </div>
+
+    <hr class="rule"/>
+
+    <section>
+      <h2>What it is</h2>
+      <p>A single PDF report. It reads the lab PDFs you already have &mdash; from
+        any lab, across as many draw dates as you&rsquo;ve collected &mdash; pulls
+        out every biomarker, and trends each one over time next to that lab&rsquo;s
+        own printed reference range. It organizes and visualizes your data. It
+        does not interpret it.</p>
+    </section>
+
+    <hr class="rule-thin"/>
+
+    <section>
+      <h2>Who it&rsquo;s for</h2>
+      <ul class="plain who">
+        <li><b>People on TRT, HRT, or peptide protocols</b> who draw bloodwork
+          every 8&ndash;12 weeks.</li>
+        <li><b>Anyone tracking a panel over time</b> &mdash; testosterone,
+          estradiol, SHBG, hematocrit, PSA, LH, lipids, and more.</li>
+        <li><b>People who want one document to bring to their physician</b>
+          instead of a stack of portal logins.</li>
+      </ul>
+    </section>
+
+    <hr class="rule-thin"/>
+
+    <section>
+      <h2>What you get</h2>
+      <ul class="plain">
+        <li>A trend chart for every biomarker &mdash; value over time, with the
+          lab&rsquo;s own reference range shaded in.</li>
+        <li>A master data table with every value from every draw, side by side.</li>
+        <li>A factual flag wherever a value falls outside the lab&rsquo;s own
+          printed range.</li>
+        <li>A clean, branded PDF designed to be printed and handed to your doctor.</li>
+      </ul>
+    </section>
+
+    <hr class="rule-thin"/>
+
+    <section>
+      <h2>Price</h2>
+      <div class="price-row">
+        <div class="price-card">
+          <div class="amt">$79</div>
+          <div class="per">one-time</div>
+          <div class="lbl">One report from the lab PDFs you send.</div>
+        </div>
+        <div class="price-card">
+          <div class="amt">$29<span class="per"> / month</span></div>
+          <div class="lbl">Keep it updated with every new draw.</div>
+        </div>
+      </div>
+    </section>
+
+    <hr class="rule"/>
+
+    <section>
+      <div class="cta">
+        <h3>Email me your labs to get started.</h3>
+        <p>Send your lab PDFs and the name you&rsquo;d like on the report. I&rsquo;ll
+          turn them into your Biomarker Timeline.</p>
+        <a class="email" href="mailto:labs@vitalisforge.example?subject=Biomarker%20Timeline%20%E2%80%94%20my%20labs">labs@vitalisforge.example</a>
+        <div class="note">Replace with your real address before sharing. Your
+          files are used only to build your report.</div>
+      </div>
+    </section>
+
+    <div class="disclaimer">
+      <h3>Please read</h3>
+      <p>Biomarker Timeline is a data-organization report, not medical advice. It
+        transcribes and charts the values from the lab PDFs you provide, next to
+        each lab&rsquo;s own printed reference range. It does not interpret those
+        values, diagnose any condition, or prescribe any treatment, dose,
+        supplement, or action. Review all results with a licensed physician, who
+        is the appropriate person to discuss what they mean for you.</p>
+    </div>
+  </div>
+
+  <footer>
+    <div class="wrap">
+      Biomarker Timeline &middot; a report produced under the Vitalis Forge
+      wellness brand &middot; data organization only, not medical advice.
+    </div>
+  </footer>
+</body>
+</html>
