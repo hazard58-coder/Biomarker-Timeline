@@ -56,8 +56,8 @@ Biomarker-Timeline/
 ├── PLAN.md                    ← 7-day launch plan
 ├── MESSAGES.md                ← 5 first-contact message templates
 ├── landing.html               ← single-file landing page
-├── serve.py                   ← stdlib static server for the landing page (Railway)
-├── railway.json / nixpacks.toml / Procfile  ← Railway deploy config
+├── webapp.py                  ← hosted web service: upload PDFs in a browser, download the report
+├── Dockerfile / railway.json  ← Railway deploy config (web service)
 ├── requirements.txt
 ├── pyproject.toml
 ├── input/                     ← put a client's lab PDFs here
@@ -144,36 +144,59 @@ python tools/make_sample.py
 
 ---
 
-## Deploy the landing page (Railway)
+## The hosted web service (upload in a browser)
 
-The report tool is a local CLI script — it runs on your machine, not a server.
-The only web-facing piece is `landing.html`, and it's deployed on **Railway**
-(not Vercel or Supabase). It's served by `serve.py` using only the Python
-standard library — no web framework, no database, consistent with the rest of
-the project.
+Besides the local CLI, the tool can run as a hosted web service so a client can
+**upload their lab PDFs in a browser and download the finished report** — the
+same four-stage pipeline runs server-side. It's deployed on **Railway** (not
+Vercel or Supabase), built from the `Dockerfile`.
 
-**One-time deploy:**
+Routes:
+
+| Route | What it is |
+|-------|------------|
+| `/` | the public landing page (`landing.html`) |
+| `/app` | the upload tool — pick PDFs, optional name, get a report |
+| `/sample.pdf` | the finished sample report (so prospects can see a real one) |
+| `/healthz` | health check for Railway |
+
+**The `/app` tool is intentionally NOT linked from the landing page** — it's
+reachable only by direct link, so you control who generates reports. Share the
+`/app` URL with paying or trial clients.
+
+**The guardrail still holds in the browser:** the mandatory self-check runs on
+every upload. If it fails, the service does **not** return a report — it shows
+the items a human must verify and points the visitor to your email. An
+unreviewed report is never shipped, on the web or the CLI.
+
+### Run the web service locally
+
+```bash
+pip install -e .            # if you haven't already
+pip install flask gunicorn  # web-only deps (also in requirements.txt)
+python webapp.py            # then open http://localhost:8080
+```
+
+### Deploy on Railway
 
 1. Push this repo to GitHub (already done if you're reading this on GitHub).
 2. In [Railway](https://railway.app), create a new project →
    **Deploy from GitHub repo** → pick this repo.
-3. Railway reads `railway.json` / `nixpacks.toml` automatically, builds, and
-   starts `python serve.py`. No environment variables are required (Railway
-   provides `PORT`).
-4. Under the service's **Settings → Networking**, click **Generate Domain** to
-   get a public URL.
-
-That's it. The landing page is live, and the finished sample report is available
-at `/sample.pdf` so prospects can see a real example before they buy.
+3. Railway reads `railway.json`, builds the `Dockerfile` (which installs the
+   system libraries WeasyPrint needs), and starts `gunicorn webapp:app`. No
+   environment variables are required — Railway provides `PORT`.
+4. Under **Settings → Networking**, click **Generate Domain** for a public URL.
+   Your landing page is at `/`; hand clients the `…/app` link to upload labs.
 
 > Prefer the Railway CLI? `npm i -g @railway/cli`, then `railway login` and
 > `railway up` from this folder.
 
-Run it locally first to check it:
+> **Privacy:** uploaded files are written to a temporary folder, processed, and
+> deleted as soon as the report is returned. Nothing is persisted on the server.
 
-```bash
-python serve.py            # then open http://localhost:8080
-```
+> **Memory:** the `Dockerfile` runs 2 gunicorn workers, which suits a
+> personal-scale tool. If your Railway plan is memory-constrained, drop to
+> `--workers 1` in the `Dockerfile` `CMD`.
 
 ---
 

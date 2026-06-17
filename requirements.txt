@@ -8,3 +8,8 @@ weasyprint>=60
 pdfplumber>=0.11
 matplotlib>=3.7
 fonttools>=4.40
+
+# Hosted web service only (webapp.py). The CLI does not need these, but they are
+# small and harmless to install alongside it.
+flask>=3.0
+gunicorn>=21.2
