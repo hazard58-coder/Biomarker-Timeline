@@ -185,15 +185,26 @@ granted with a signed, time-limited cookie.
 | `ACCESS_CODES` | Comma-separated comp/trial codes (e.g. `TRIAL50,FRIEND`). Hand these out for the free or half-price trial reports. |
 | `APP_BASE_URL` | *(optional)* Public origin for Stripe return URLs, e.g. `https://yourapp.up.railway.app`. Auto-derived from the request if unset. |
 | `GATE_SECRET` | Secret used to sign access cookies. **Set this in production** to a long random string. |
-| `ACCESS_TTL_SECONDS` | *(optional)* How long access lasts after payment/unlock (default `7200` = 2 h). |
+| `ACCESS_TTL_SECONDS` | *(optional)* How long the access cookie lasts after payment/unlock (default `7200` = 2 h). |
+| `ENTITLEMENT_DB` | *(optional)* Path to the SQLite store that records consumed payments (default `data/entitlements.db`). |
 
 - Set **`STRIPE_SECRET_KEY`** to charge for reports, **`ACCESS_CODES`** to hand out
   trials, or **both** (the paywall shows a Pay button *and* a code field).
 - Set **neither** and `/app` stays open.
 
-> One Stripe payment grants access for `ACCESS_TTL_SECONDS` (default 2 hours),
-> which keeps the flow simple with no database. If you need strict one-report-
-> per-payment metering, that's the natural next step (it needs a small store).
+> **Strict one report per payment.** Each Stripe payment yields exactly one
+> delivered report. Stripe is the source of truth for whether a session was paid
+> (re-verified live, so a paid entitlement survives any redeploy), and a small
+> SQLite store records which paid sessions have been *consumed*. A payment is
+> consumed only after a report is successfully delivered — a self-check failure
+> never burns a customer's payment. (Trial-code access is operator-controlled and
+> not metered.)
+>
+> The consumed-record lives at `ENTITLEMENT_DB`. Railway's container filesystem
+> is ephemeral, so for durability across redeploys, add a **Volume** to the
+> service and set `ENTITLEMENT_DB` to a path on it (e.g. `/data/entitlements.db`).
+> Without a volume, the only downside is a customer could regenerate a report they
+> already received after a redeploy — a paid entitlement is never lost.
 
 In Railway, add these under the service's **Variables** tab.
 

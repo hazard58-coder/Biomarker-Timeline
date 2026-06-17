@@ -33,6 +33,7 @@ from flask import (  # noqa: E402
 from werkzeug.utils import secure_filename  # noqa: E402
 
 import gate  # noqa: E402
+import store  # noqa: E402
 from biomarker_timeline.pipeline import run_pipeline  # noqa: E402
 
 app = Flask(__name__)
@@ -223,6 +224,21 @@ def _review_page(items: list[str]) -> str:
     """)
 
 
+def _already_used_page() -> str:
+    return _page("Payment already used", f"""
+    <div class="spacer"></div>
+    <div class="kicker">Biomarker Timeline</div>
+    <h1 class="title">That payment was already used.</h1>
+    <p>Each payment covers one report, and a report has already been generated for
+      this one. If you have a new draw to add or need another report, you can buy
+      another below.</p>
+    <p><a class="btn" href="/app">Get another report</a></p>
+    <div class="spacer"></div>
+    <p class="hintrow">If you think this is a mistake, email
+      <a href="mailto:contact@vitalisforge.com">contact@vitalisforge.com</a>.</p>
+    """)
+
+
 def _error_page(msg: str) -> str:
     return _page("Something went wrong", f"""
     <div class="spacer"></div>
@@ -344,6 +360,18 @@ def generate() -> Response:
     if not _has_access():
         return redirect("/app", code=303)
 
+    # Strict one-report-per-payment: a Stripe-paid session may produce exactly
+    # one delivered report. (Trial-code access is operator-controlled and not
+    # metered here.) We check consumption up front, and only mark the session
+    # consumed AFTER a report is successfully delivered, so a self-check failure
+    # never burns the customer's payment.
+    payload = gate.read_token(request.cookies.get(gate.COOKIE_NAME))
+    paid_session_id = None
+    if payload and payload.get("k") == "stripe":
+        paid_session_id = payload.get("ref")
+        if paid_session_id and store.is_consumed(paid_session_id):
+            return Response(_already_used_page(), mimetype="text/html", status=403)
+
     uploads = [f for f in request.files.getlist("labs")
                if f and f.filename and f.filename.lower().endswith(".pdf")]
     if not uploads:
@@ -381,6 +409,10 @@ def generate() -> Response:
 
         # Success — read the bytes before the temp dir is cleaned up.
         data = out_pdf.read_bytes()
+
+    # Report delivered: now (and only now) consume the payment.
+    if paid_session_id:
+        store.mark_consumed(paid_session_id, note="report delivered")
 
     base = _safe_slug(client_name) if client_name else "Client"
     download_name = f"{base}_Biomarker_Timeline_{date.today().isoformat()}.pdf"

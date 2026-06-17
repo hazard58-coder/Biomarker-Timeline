@@ -29,10 +29,18 @@ language); you enforce it in how you talk about the product.
         OR enters a trial code ▶  Code checked
                                   → access cookie set (valid 2h)
  3. Uploads lab PDFs  ─────────▶  INTAKE → EXTRACT → SELF-CHECK → OUTPUT
- 4a. Self-check PASSES  ───────▶  Branded PDF downloads to their device
+ 4a. Self-check PASSES  ───────▶  Branded PDF downloads; the payment is now
+                                  marked used (one report per payment)
  4b. Self-check FAILS   ───────▶  "Needs a human first" page; no report shipped;
-                                  they're told to email contact@vitalisforge.com
+                                  payment NOT used; they email contact@vitalisforge.com
 ```
+
+**One report per payment.** A Stripe payment produces exactly one delivered
+report. If a paid customer returns and tries to generate a second time, they see
+"That payment was already used" with a link to buy another. A payment is only
+consumed once a report is actually delivered, so a self-check failure leaves it
+intact. Trial-code access is not metered — it lasts the access window so you can
+re-run during testing.
 
 What the customer experiences:
 1. Goes to the `/app` link you gave them.

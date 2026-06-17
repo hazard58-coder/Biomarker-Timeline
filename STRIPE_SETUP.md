@@ -76,11 +76,17 @@ Set a Railway variable `ACCESS_CODES` to comma-separated codes, e.g.
 code?"** on `/app` and skip payment. Codes and Stripe can run at the same time.
 
 ## Good to know
-- **Access lasts 2 hours per payment** (a signed cookie — no database), so one
-  payment can generate more than one report in that window. Fine to start; strict
-  one-report-per-payment would need a small datastore.
-- All gating variables are summarized in the README's
-  "Gating the tool" table.
+- **One report per payment.** Each payment yields exactly one delivered report.
+  Stripe is the source of truth for whether a session was paid, and a small
+  SQLite store (`ENTITLEMENT_DB`) records which paid sessions were used. A payment
+  is only marked used *after* a report is successfully delivered, so a self-check
+  failure never burns a customer's payment.
+- **Make it durable on Railway.** The container filesystem is ephemeral. To keep
+  the consumed-record across redeploys, add a **Volume** to the service and set
+  `ENTITLEMENT_DB` to a path on it (e.g. `/data/entitlements.db`). Without a
+  volume, a paid entitlement is still never lost — at worst a customer could
+  regenerate a report they already got after a redeploy.
+- All gating variables are summarized in the README's "Gating the tool" table.
 
 ## Quick reference — all gating variables
 
@@ -92,4 +98,5 @@ code?"** on `/app` and skip payment. Codes and Stripe can run at the same time.
 | `STRIPE_PRICE_ID` | optional | Use a catalog Price instead of inline $79 |
 | `REPORT_PRICE_CENTS` | optional | Inline price in cents (default `7900`) |
 | `ACCESS_CODES` | optional | Comp/trial codes |
-| `ACCESS_TTL_SECONDS` | optional | Access window length (default `7200`) |
+| `ACCESS_TTL_SECONDS` | optional | Access cookie length (default `7200`) |
+| `ENTITLEMENT_DB` | optional | SQLite path for consumed-payment records (default `data/entitlements.db`; point at a Railway volume for durability) |

@@ -61,13 +61,18 @@ def issue_token(kind: str, ref: str) -> str:
 
 
 def token_is_valid(token: str | None) -> bool:
+    return read_token(token) is not None
+
+
+def read_token(token: str | None) -> dict | None:
+    """Return the token payload {'k': kind, 'ref': ref} if valid, else None."""
     if not token:
-        return False
+        return None
     try:
-        _serializer.loads(token, max_age=ACCESS_TTL_SECONDS)
-        return True
+        data = _serializer.loads(token, max_age=ACCESS_TTL_SECONDS)
+        return data if isinstance(data, dict) else None
     except (BadSignature, SignatureExpired):
-        return False
+        return None
 
 
 def code_is_valid(code: str | None) -> bool:

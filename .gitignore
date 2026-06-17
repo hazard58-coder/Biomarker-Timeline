@@ -10,6 +10,12 @@ output/*.txt
 
 # The sample deliverable IS committed (it's the showcase), so samples/ is NOT ignored.
 
+# Entitlement datastore (one-report-per-payment records)
+data/
+*.db
+*.db-wal
+*.db-shm
+
 # Python
 __pycache__/
 *.py[cod]
