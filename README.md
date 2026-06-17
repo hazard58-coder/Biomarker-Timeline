@@ -169,6 +169,32 @@ every upload. If it fails, the service does **not** return a report — it shows
 the items a human must verify and points the visitor to your email. An
 unreviewed report is never shipped, on the web or the CLI.
 
+### Gating the tool (payment + trial codes)
+
+By default `/app` is **open** so a fresh deploy works immediately. You switch on
+gating purely with environment variables — no code change, no database. Access is
+granted with a signed, time-limited cookie.
+
+| Variable | What it does |
+|----------|--------------|
+| `STRIPE_SECRET_KEY` | Enables Stripe Checkout. Visitors pay before they can upload. |
+| `STRIPE_PRICE_ID` | *(optional)* Use a specific Stripe Price; otherwise an inline `$79` one-time price is used. |
+| `REPORT_PRICE_CENTS` | *(optional)* Inline price in cents (default `7900` = $79). |
+| `ACCESS_CODES` | Comma-separated comp/trial codes (e.g. `TRIAL50,FRIEND`). Hand these out for the free or half-price trial reports. |
+| `APP_BASE_URL` | *(optional)* Public origin for Stripe return URLs, e.g. `https://yourapp.up.railway.app`. Auto-derived from the request if unset. |
+| `GATE_SECRET` | Secret used to sign access cookies. **Set this in production** to a long random string. |
+| `ACCESS_TTL_SECONDS` | *(optional)* How long access lasts after payment/unlock (default `7200` = 2 h). |
+
+- Set **`STRIPE_SECRET_KEY`** to charge for reports, **`ACCESS_CODES`** to hand out
+  trials, or **both** (the paywall shows a Pay button *and* a code field).
+- Set **neither** and `/app` stays open.
+
+> One Stripe payment grants access for `ACCESS_TTL_SECONDS` (default 2 hours),
+> which keeps the flow simple with no database. If you need strict one-report-
+> per-payment metering, that's the natural next step (it needs a small store).
+
+In Railway, add these under the service's **Variables** tab.
+
 ### Run the web service locally
 
 ```bash

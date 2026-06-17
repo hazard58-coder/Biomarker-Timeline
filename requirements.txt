@@ -13,3 +13,4 @@ fonttools>=4.40
 # small and harmless to install alongside it.
 flask>=3.0
 gunicorn>=21.2
+stripe>=7.0

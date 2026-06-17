@@ -27,9 +27,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from flask import Flask, Response, request, send_file  # noqa: E402
+from flask import (  # noqa: E402
+    Flask, Response, make_response, redirect, request, send_file,
+)
 from werkzeug.utils import secure_filename  # noqa: E402
 
+import gate  # noqa: E402
 from biomarker_timeline.pipeline import run_pipeline  # noqa: E402
 
 app = Flask(__name__)
@@ -148,6 +151,58 @@ def _upload_form(error: str | None = None) -> str:
     """)
 
 
+def _paywall(canceled: bool = False, error: str | None = None) -> str:
+    cancel_html = ('<div class="card err"><b>Payment canceled — you have not been '
+                   'charged. You can try again whenever you\'re ready.</b></div>'
+                   if canceled else "")
+    err_html = f'<div class="card err"><b>{_escape(error)}</b></div>' if error else ""
+
+    pay_block = ""
+    if gate.stripe_configured():
+        pay_block = f"""
+        <div class="card">
+          <label class="fld">One report</label>
+          <p style="margin:2px 0 14px;font-size:15px;">A single Biomarker Timeline
+            report built from the lab PDFs you upload.</p>
+          <form action="/checkout" method="post" style="margin:0;">
+            <button class="btn" type="submit">Pay {gate.price_display()} &amp; continue</button>
+          </form>
+          <p class="hintrow">Secure checkout via Stripe. You'll come right back here
+            to upload your labs.</p>
+        </div>"""
+
+    code_block = ""
+    if gate.codes_configured():
+        code_block = """
+        <div class="card">
+          <label class="fld" for="code">Have a trial code?</label>
+          <form action="/unlock" method="post" style="margin:0;">
+            <input type="text" id="code" name="code" placeholder="Enter your code"/>
+            <div class="spacer"></div>
+            <button class="btn" type="submit">Unlock with code</button>
+          </form>
+        </div>"""
+
+    no_purchase = ""
+    if not gate.stripe_configured():
+        no_purchase = ('<p>To purchase a report, email '
+                       '<a href="mailto:contact@vitalisforge.com">contact@vitalisforge.com</a>.</p>')
+
+    return _page("Get your Biomarker Timeline", f"""
+    <div class="spacer"></div>
+    <div class="kicker">Biomarker Timeline</div>
+    <h1 class="title">Get your report.</h1>
+    <p>Build one report from your own lab PDFs — charts for every biomarker over
+      time, with each lab's own reference range. {gate.price_display()} one-time.</p>
+    <p><a href="/sample.pdf">See a finished sample report →</a></p>
+    <hr class="rule"/>
+    {cancel_html}{err_html}
+    {pay_block}
+    {code_block}
+    {no_purchase}
+    """)
+
+
 def _review_page(items: list[str]) -> str:
     lis = "".join(f"<li>{_escape(i)}</li>" for i in items) or "<li>(no detail)</li>"
     return _page("Manual review needed", f"""
@@ -187,6 +242,37 @@ def _safe_slug(name: str) -> str:
     return slug or "Client"
 
 
+def _base_url() -> str:
+    """Public origin for Stripe return URLs. Prefer APP_BASE_URL; otherwise derive
+    from the request, forcing https for non-local hosts (Railway sits behind a
+    TLS-terminating proxy)."""
+    import os
+    env = os.environ.get("APP_BASE_URL", "").strip().rstrip("/")
+    if env:
+        return env
+    root = request.host_url.rstrip("/")
+    if root.startswith("http://") and not any(
+            h in root for h in ("localhost", "127.0.0.1")):
+        root = "https://" + root[len("http://"):]
+    return root
+
+
+def _has_access() -> bool:
+    """True if the visitor may use /app and /generate."""
+    if not gate.gating_enabled():
+        return True
+    return gate.token_is_valid(request.cookies.get(gate.COOKIE_NAME))
+
+
+def _grant_cookie(resp: Response, kind: str, ref: str) -> Response:
+    secure = _base_url().startswith("https")
+    resp.set_cookie(
+        gate.COOKIE_NAME, gate.issue_token(kind, ref),
+        max_age=gate.ACCESS_TTL_SECONDS, httponly=True, secure=secure, samesite="Lax",
+    )
+    return resp
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -209,11 +295,55 @@ def healthz() -> Response:
 
 @app.get("/app")
 def upload_page() -> Response:
-    return Response(_upload_form(), mimetype="text/html")
+    # Open tool if no gating configured.
+    if not gate.gating_enabled():
+        return Response(_upload_form(), mimetype="text/html")
+
+    # Already holds a valid access cookie.
+    if _has_access():
+        return Response(_upload_form(), mimetype="text/html")
+
+    # Returning from a successful Stripe Checkout.
+    session_id = request.args.get("session_id")
+    if session_id and gate.stripe_configured() and gate.session_is_paid(session_id):
+        resp = make_response(_upload_form())
+        return _grant_cookie(resp, "stripe", session_id)
+
+    # Otherwise show the paywall.
+    return Response(
+        _paywall(canceled=bool(request.args.get("canceled"))),
+        mimetype="text/html",
+    )
+
+
+@app.post("/checkout")
+def checkout() -> Response:
+    if not gate.stripe_configured():
+        return Response(_paywall(error="Online payment isn't configured yet."),
+                        mimetype="text/html", status=400)
+    try:
+        url = gate.create_checkout_session(_base_url())
+    except Exception as exc:
+        return Response(_paywall(error=f"Couldn't start checkout ({exc})."),
+                        mimetype="text/html", status=502)
+    return redirect(url, code=303)
+
+
+@app.post("/unlock")
+def unlock() -> Response:
+    code = request.form.get("code", "")
+    if gate.code_is_valid(code):
+        resp = make_response(redirect("/app", code=303))
+        return _grant_cookie(resp, "code", code.strip())
+    return Response(_paywall(error="That code wasn't recognized."),
+                    mimetype="text/html", status=403)
 
 
 @app.post("/generate")
 def generate() -> Response:
+    if not _has_access():
+        return redirect("/app", code=303)
+
     uploads = [f for f in request.files.getlist("labs")
                if f and f.filename and f.filename.lower().endswith(".pdf")]
     if not uploads:
