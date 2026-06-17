@@ -164,9 +164,10 @@ Routes:
 | `/sample.pdf` | the finished sample report (so prospects can see a real one) |
 | `/healthz` | health check for Railway |
 
-**The `/app` tool is intentionally NOT linked from the landing page** — it's
-reachable only by direct link, so you control who generates reports. Share the
-`/app` URL with paying or trial clients.
+**The site shares one sticky nav** (Pricing · FAQ · Sign in · Get started) across
+the landing page and the app pages, so it reads as a single product. The landing
+page's "Get started" buttons go to `/app`; access there is controlled by the
+paywall/gating (below), not by hiding the link.
 
 **The guardrail still holds in the browser:** the mandatory self-check runs on
 every upload. If it fails, the service does **not** return a report — it shows

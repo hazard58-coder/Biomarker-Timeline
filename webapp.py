@@ -64,12 +64,17 @@ _HEAD = """<!DOCTYPE html><html lang="en"><head>
   .wrap{{max-width:680px;margin:0 auto;padding:0 24px;}}
   h1,h2,h3{{font-family:'Oswald',sans-serif;letter-spacing:0.02em;margin:0;}}
   a{{color:var(--gold);}}
-  header{{border-bottom:1px solid var(--hairline);padding:22px 0;}}
-  .brand{{display:flex;justify-content:space-between;align-items:baseline;}}
-  .wordmark{{font-family:'Oswald',sans-serif;font-weight:700;font-size:20px;
+  header{{position:sticky;top:0;z-index:50;background:rgba(14,15,18,0.92);
+    border-bottom:1px solid var(--hairline);padding:13px 0;}}
+  .brand{{display:flex;justify-content:space-between;align-items:center;}}
+  .wordmark{{font-family:'Oswald',sans-serif;font-weight:700;font-size:19px;
     letter-spacing:0.18em;color:var(--copper);text-decoration:none;}}
-  .brandtag{{font-family:'Oswald',sans-serif;font-weight:600;font-size:11px;
-    letter-spacing:0.2em;color:var(--muted);}}
+  .navlinks{{display:flex;align-items:center;gap:20px;}}
+  .navlinks a{{color:var(--muted);font-family:'Oswald',sans-serif;font-weight:600;
+    font-size:12.5px;letter-spacing:0.08em;text-transform:uppercase;text-decoration:none;}}
+  .navlinks a:hover{{color:var(--offwhite);}}
+  .nav-cta{{color:var(--obsidian)!important;background:var(--gold);
+    padding:8px 16px;border-radius:4px;}}
   .kicker{{font-family:'Oswald',sans-serif;font-weight:600;font-size:13px;
     letter-spacing:0.24em;color:var(--gold);text-transform:uppercase;}}
   h1.title{{font-size:40px;line-height:1.04;font-weight:700;margin:12px 0 16px;}}
@@ -103,7 +108,12 @@ _HEAD = """<!DOCTYPE html><html lang="en"><head>
 </style></head><body>
 <header><div class="wrap brand">
   <a class="wordmark" href="/">VITALIS&nbsp;FORGE</a>
-  <span class="brandtag">WELLNESS · DATA</span>
+  <nav class="navlinks">
+    <a href="/#pricing">Pricing</a>
+    <a href="/#faq">FAQ</a>
+    <a href="/login">Sign in</a>
+    <a class="nav-cta" href="/app">Get started</a>
+  </nav>
 </div></header>
 <div class="wrap">
 """
