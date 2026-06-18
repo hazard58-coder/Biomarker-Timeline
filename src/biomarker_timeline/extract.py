@@ -32,8 +32,14 @@ KNOWN_UNITS = [
 _UNIT_RE = re.compile("(" + "|".join(re.escape(u) for u in KNOWN_UNITS) + ")", re.I)
 _UNIT_CANON = {u.lower(): u for u in KNOWN_UNITS}
 
-# Strip a leading "Reference Range:" / "Reference Interval:" label before parsing.
-_REF_LABEL = re.compile(r"reference\s+(range|interval)\s*:?", re.I)
+# A value is a number that starts a fresh token (preceded by whitespace/line
+# start), so a digit inside an analyte name (e.g. the "1" in "Hemoglobin A1c")
+# is never mistaken for the result.
+_VALUE_NUM = re.compile(r"(?:^|\s)(-?\d+(?:\.\d+)?)")
+
+# Strip a leading range label before parsing. Labs use several: Quest prints
+# "Reference Range:", PWNHealth-style reports print "Desired Range:", etc.
+_REF_LABEL = re.compile(r"(reference|desired|normal|expected|ref)\s+(range|interval)\s*:?", re.I)
 
 # Reference-range shapes, in priority order. The (?:or)?=? handles Quest's
 # "< OR = 39" / "> OR = 40" notation as well as "<=" / ">=" and plain "<200".
@@ -141,15 +147,18 @@ def _parse_reference(text: str) -> tuple[ReferenceRange | None, str]:
     return None, ""
 
 
-def _standalone_reference(line: str) -> ReferenceRange | None:
-    """Parse a line that is essentially just a reference-range statement, e.g.
-    Quest's "Reference range: <100" printed on its own line below the value."""
+def _standalone_refunit(line: str) -> tuple[ReferenceRange | None, str]:
+    """Parse a line that is essentially just a range statement printed below the
+    value, e.g. Quest's "Reference range: <100" or "Desired Range: 250-1100
+    ng/dL". Returns (range, unit) — the unit may live on this line too."""
     s = line.strip()
     if not _REF_LABEL.match(s):
-        return None
+        return None, ""
     body = _REF_LABEL.sub(" ", s, count=1)
     ref, _ = _parse_reference(body)
-    return ref
+    unit_m = _UNIT_RE.search(body)
+    unit = _UNIT_CANON.get(unit_m.group(1).lower(), unit_m.group(1)) if unit_m else ""
+    return ref, unit
 
 
 def _parse_line(line: str) -> tuple[str, float, str, ReferenceRange, list[str], float] | None:
@@ -165,11 +174,12 @@ def _parse_line(line: str) -> tuple[str, float, str, ReferenceRange, list[str], 
     # of the analyte name. Analyte names occasionally contain digits (e.g.
     # "Vitamin D, 25-Hydroxy") so we look for the first standalone number that
     # is followed by unit/range-like content.
-    first_num = _NUMBER.search(line)
+    first_num = _VALUE_NUM.search(line)
     if not first_num:
         return None
-    label_part = line[: first_num.start()].strip()
-    data_part = line[first_num.start():].strip()
+    start = first_num.start(1)
+    label_part = line[:start].strip()
+    data_part = line[start:].strip()
 
     # Some labs (e.g. Quest) print the High/Low flag column BETWEEN the analyte
     # name and the value, so it lands at the tail of the label. Strip trailing
@@ -240,17 +250,28 @@ def extract_document(doc: SourceDocument) -> tuple[list[Reading], list[str]]:
     for raw_line in doc.lines:
         parsed = _parse_line(raw_line)
         if not parsed:
-            # Some labs print the reference range on the line BELOW the value
-            # (e.g. Quest's LDL "Reference range: <100"). Attach it to the
-            # preceding marker if that one didn't carry its own range.
-            if last is not None and not last.reference.has_range:
-                ref = _standalone_reference(raw_line)
-                if ref is not None and ref.has_range:
+            # Some labs print the range (and sometimes the unit) on the line
+            # BELOW the value — Quest's LDL "Reference range: <100", or a
+            # PWNHealth-style "Desired Range: 250-1100 ng/dL". Attach to the
+            # preceding marker if it was missing those.
+            if last is not None and (not last.reference.has_range or not last.unit):
+                ref, unit = _standalone_refunit(raw_line)
+                got_range = ref is not None and ref.has_range and not last.reference.has_range
+                got_unit = bool(unit) and not last.unit
+                if got_range:
                     last.reference = ref
-                    last.review_flags = [f for f in last.review_flags
-                                         if "reference range" not in f]
-                    last.confidence = round(min(1.0, last.confidence / 0.90), 3)
-                    last = None
+                    last.confidence = last.confidence / 0.90
+                if got_unit:
+                    last.unit = unit
+                    last.confidence = last.confidence / 0.85
+                if got_range or got_unit:
+                    last.review_flags = [
+                        f for f in last.review_flags
+                        if not (got_range and "reference range" in f)
+                        and not (got_unit and "unit not detected" in f)]
+                    last.confidence = round(min(1.0, last.confidence), 3)
+                    if last.reference.has_range and last.unit:
+                        last = None  # fully resolved
             continue
         label, value, unit, reference, review, conf = parsed
         canonical, _ = canonical_for(label)

@@ -124,7 +124,8 @@ def canonical_for(label: str) -> tuple[str | None, float]:
         return None, 0.0
     # Negated/derived analytes ("Non HDL Cholesterol", "Free T4 Index") are
     # distinct from the base marker — don't let them fuzzy-match to it.
-    if cleaned.startswith("non ") or "ratio" in cleaned or "index" in cleaned:
+    if (cleaned.startswith("non ") or "ratio" in cleaned or "index" in cleaned
+            or "a1c" in cleaned):
         if cleaned not in _SYNONYM_INDEX:
             return None, 0.0
     if cleaned in _SYNONYM_INDEX:
