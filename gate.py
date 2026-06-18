@@ -25,6 +25,21 @@ _log = logging.getLogger("biomarker.gate")
 
 COOKIE_NAME = "bt_access"
 
+
+def _sg(obj, key, default=None):
+    """Safe field access on a Stripe object.
+
+    Newer stripe-python `StripeObject`s do not expose a dict-style `.get()` —
+    `session.get("x")` is misread as a data key and raises. Attribute access is
+    the supported path, so we use getattr (which returns `default` when the field
+    is absent).
+    """
+    try:
+        value = getattr(obj, key, default)
+    except (AttributeError, KeyError):
+        return default
+    return value if value is not None else default
+
 # --- configuration (read once at import) ---
 REPORT_PRICE_CENTS = int(os.environ.get("REPORT_PRICE_CENTS", "7900"))  # $79.00 one-time
 SUBSCRIPTION_PRICE_CENTS = int(os.environ.get("SUBSCRIPTION_PRICE_CENTS", "2900"))  # $29.00/mo
@@ -189,7 +204,7 @@ def subscription_active(customer_id: str) -> bool:
             subs = stripe.Subscription.list(customer=customer_id, status=status, limit=1)
         except Exception:
             return False
-        if subs.get("data"):
+        if _sg(subs, "data"):
             return True
     return False
 
@@ -206,9 +221,10 @@ def find_active_subscription_customer(email: str) -> str | None:
         customers = stripe.Customer.list(email=email.strip(), limit=10)
     except Exception:
         return None
-    for cust in customers.get("data", []):
-        if subscription_active(cust.get("id")):
-            return cust.get("id")
+    for cust in (_sg(customers, "data") or []):
+        cust_id = _sg(cust, "id")
+        if subscription_active(cust_id):
+            return cust_id
     return None
 
 
@@ -233,54 +249,25 @@ def checkout_session_info(session_id: str) -> dict:
     try:
         session = stripe.checkout.Session.retrieve(session_id)
 
-        customer = session.get("customer")
-        email = (session.get("customer_details") or {}).get("email")
+        customer = _sg(session, "customer")
+        details = _sg(session, "customer_details")
+        email = _sg(details, "email") if details is not None else None
+        payment_status = _sg(session, "payment_status")
 
-        if session.get("mode") == "subscription":
-            active = session.get("payment_status") == "paid" and bool(session.get("subscription"))
+        if _sg(session, "mode") == "subscription":
+            sub_id = _sg(session, "subscription")
+            active = payment_status == "paid" and bool(sub_id)
             if active:
-                sub_id = session.get("subscription")
                 try:
                     sub = stripe.Subscription.retrieve(sub_id)
-                    active = sub.get("status") in ("active", "trialing")
+                    active = _sg(sub, "status") in ("active", "trialing")
                 except Exception:
                     _log.exception("could not retrieve subscription for session %s", session_id)
             return {"active": active, "plan": "sub", "customer": customer, "email": email}
 
-        return {"active": session.get("payment_status") == "paid",
+        return {"active": payment_status == "paid",
                 "plan": "once", "customer": customer, "email": email}
     except Exception:
         # Log the real cause (it shows up in Railway logs) instead of swallowing it.
         _log.exception("checkout_session_info failed for session %s", session_id)
         return {"active": False, "plan": "once", "customer": None, "email": None}
-
-
-def checkout_session_status(session_id: str) -> tuple[bool, str]:
-    """Verify a returned Checkout Session (live API call).
-
-    Returns (active, plan) where plan is 'once' or 'sub'. For one-time payments,
-    active means the payment is paid. For subscriptions, active means the first
-    invoice is paid and the subscription is in an active/trialing state.
-    """
-    import stripe
-
-    stripe.api_key = STRIPE_SECRET_KEY
-    try:
-        session = stripe.checkout.Session.retrieve(session_id)
-    except Exception:
-        return False, "once"
-
-    if session.get("mode") == "subscription":
-        if session.get("payment_status") != "paid":
-            return False, "sub"
-        sub_id = session.get("subscription")
-        if not sub_id:
-            return False, "sub"
-        try:
-            sub = stripe.Subscription.retrieve(sub_id)
-            return sub.get("status") in ("active", "trialing"), "sub"
-        except Exception:
-            # First invoice paid but couldn't load the subscription — treat as active.
-            return True, "sub"
-
-    return session.get("payment_status") == "paid", "once"
