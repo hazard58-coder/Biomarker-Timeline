@@ -100,7 +100,7 @@ class ReportContext:
 
     @property
     def n_flags(self) -> int:
-        return sum(1 for r in self.readings if r.out_of_range)
+        return sum(1 for r in self.readings if r.flagged)
 
 
 def _esc(s: str) -> str:
@@ -207,17 +207,16 @@ def _chart_block(ctx: ReportContext) -> str:
         cells = []
         for r in s.ordered():
             flag = ""
-            if r.out_of_range:
-                pos = r.range_position() or "outside"
-                flag = f" <span class='flagged'>({pos} range)</span>"
+            if r.flagged:
+                flag = f" <span class='flagged'>({_esc(r.flag_label())})</span>"
             cells.append(
                 f"<span class='cap-date'>{r.draw_date.strftime('%b %Y')}:</span> "
                 f"<span class='cap-val'>{_esc(r.value_str())} {_esc(r.unit)}</span>{flag}"
             )
         caption = " &nbsp;·&nbsp; ".join(cells)
         comparable = any(r.value is not None and r.reference.has_range for r in s.readings)
-        if s.n_out_of_range:
-            flagnote = f"<span class='tag tag-flag'>{s.n_out_of_range} OUTSIDE LAB RANGE</span>"
+        if s.n_flagged:
+            flagnote = f"<span class='tag tag-flag'>{s.n_flagged} OUTSIDE LAB RANGE</span>"
         elif comparable:
             flagnote = "<span class='tag tag-inrange'>ALL INSIDE LAB RANGE</span>"
         else:
@@ -256,7 +255,7 @@ def _master_table(ctx: ReportContext) -> str:
             r = by_date.get(d)
             if r is None:
                 value_cells.append("<td class='num muted'>—</td>")
-            elif r.out_of_range:
+            elif r.flagged:
                 value_cells.append(
                     f"<td class='num flagged'>{_esc(r.value_str())}<sup>‡</sup></td>")
             else:
@@ -281,8 +280,9 @@ def _master_table(ctx: ReportContext) -> str:
   </table>
   <p class='tiny muted' style='margin-top:8pt;'>
      <span class='flagged'>‡</span> = value falls outside the lab's own printed
-     reference range for that draw. This mark is a factual comparison against the
-     printed range only.</p>
+     reference range for that draw, or was marked out of range by the lab itself.
+     This mark is a factual comparison against the printed range, or a
+     transcription of the lab's own marker — nothing more.</p>
 </section>
 """
 

@@ -63,7 +63,7 @@ def chart_png_b64(series: MarkerSeries, width_in: float = 6.6, height_in: float 
 
     # --- per-point markers; points outside the printed range get the ember dot ---
     for r in readings:
-        outside = r.out_of_range
+        outside = r.flagged
         ax.scatter([r.draw_date], [r.value], s=46, zorder=4,
                    color=theme.EMBER if outside else theme.GOLD,
                    edgecolors=theme.OBSIDIAN, linewidths=1.0)

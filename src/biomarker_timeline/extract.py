@@ -65,6 +65,10 @@ _QUALITATIVE = (r"not\s+detected|detected|negative|positive|"
 _VALUE_TOKEN = re.compile(
     rf"(?:^|\s)({_BOUNDED}|-?\d+(?:\.\d+)?|{_QUALITATIVE})", re.I)
 
+# The lab's own out-of-range marker, printed right after the value.
+_LAB_FLAG = re.compile(r"^\s*(\*+|HH|LL|HI|LO|HIGH|LOW|H|L|AA|A|ABN|ABNORMAL|"
+                       r"CRIT|CRITICAL)\b", re.I)
+
 # Values below this extraction confidence are routed to human review. This is an
 # ACCURACY gate (did we read the number right), not the legal guardrail — that
 # (no interpretation) is never relaxed. Tunable via env without a code change.
@@ -233,6 +237,19 @@ def _parse_line(line: str):
 
     review: list[str] = []
 
+    # Capture the lab's OWN out-of-range marker (e.g. the "H"/"L"/"*" printed
+    # right after the value). Transcription of the lab's judgment, not ours.
+    lab_flag = ""
+    mflag = _LAB_FLAG.match(data_after)
+    if mflag:
+        tok = mflag.group(1).upper()
+        if tok in ("H", "HI", "HH", "HIGH"):
+            lab_flag = "above"
+        elif tok in ("L", "LO", "LL", "LOW"):
+            lab_flag = "below"
+        else:  # *, A, AA, ABN, ABNORMAL, CRIT, CRITICAL
+            lab_flag = "flagged"
+
     # Reference range + unit come from the text AFTER the value, so a bounded
     # value ("<0.1") is never confused with a bounded range ("<4.0").
     reference, _range_text = _parse_reference(data_after)
@@ -250,7 +267,7 @@ def _parse_line(line: str):
     conf = max(0.0, min(1.0, conf))
 
     return (display_name(canonical), value, value_text, unit,
-            reference or ReferenceRange(), review, round(conf, 3))
+            reference or ReferenceRange(), review, round(conf, 3), lab_flag)
 
 
 def extract_document(doc: SourceDocument) -> tuple[list[Reading], list[str]]:
@@ -289,7 +306,7 @@ def extract_document(doc: SourceDocument) -> tuple[list[Reading], list[str]]:
                     if last.reference.has_range and last.unit:
                         last = None  # fully resolved
             continue
-        label, value, value_text, unit, reference, review, conf = parsed
+        label, value, value_text, unit, reference, review, conf, lab_flag = parsed
         canonical, _ = canonical_for(label)
         if canonical is None:
             continue
@@ -308,6 +325,7 @@ def extract_document(doc: SourceDocument) -> tuple[list[Reading], list[str]]:
             display_name=label,
             value=value,
             value_text=value_text,
+            lab_flag=lab_flag,
             unit=unit,
             reference=reference,
             draw_date=draw_date or date.min,

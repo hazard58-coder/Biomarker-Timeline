@@ -77,6 +77,10 @@ class Reading:
     # "Detected". Transcribed verbatim; `value` stays None so it is never
     # plotted or compared numerically (no invented numbers, no false flags).
     value_text: str = ""
+    # The lab's OWN out-of-range marker for this value, if it printed one, as a
+    # neutral key: "above" (H), "below" (L), or "flagged" (*/A/AA/critical).
+    # Transcription of the lab's judgment, not ours.
+    lab_flag: str = ""
 
     @property
     def is_numeric(self) -> bool:
@@ -105,6 +109,23 @@ class Reading:
             return "below"
         if self.reference.high is not None and self.value > self.reference.high:
             return "above"
+        return None
+
+    @property
+    def flagged(self) -> bool:
+        """Shown as flagged when OUR comparison puts it outside the lab's printed
+        range, OR — when we have no comparable range — the lab printed its own
+        out-of-range marker."""
+        return self.out_of_range or (self.in_range is None and bool(self.lab_flag))
+
+    def flag_label(self) -> Optional[str]:
+        """Factual, neutral label for the flag (never uses judgment words)."""
+        if self.out_of_range:
+            return f"{self.range_position() or 'outside'} range"
+        if self.in_range is None and self.lab_flag:
+            if self.lab_flag in ("above", "below"):
+                return f"lab: {self.lab_flag} range"
+            return "lab-flagged"
         return None
 
     def value_str(self) -> str:
@@ -156,6 +177,10 @@ class MarkerSeries:
     @property
     def n_out_of_range(self) -> int:
         return sum(1 for r in self.readings if r.out_of_range)
+
+    @property
+    def n_flagged(self) -> int:
+        return sum(1 for r in self.readings if r.flagged)
 
 
 def _fmt(x: float) -> str:
