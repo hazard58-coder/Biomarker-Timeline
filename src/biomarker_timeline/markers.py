@@ -97,8 +97,12 @@ for _m in MARKERS:
 def _clean(name: str) -> str:
     """Lowercase and squeeze a printed label for matching."""
     s = name.lower().strip()
-    # drop trailing method/flag tokens labs append, and punctuation noise
-    s = re.sub(r"\b(serum|plasma|lc/ms-ms|lcmsms|direct|calc|calculated|by .*)\b", " ", s)
+    # drop method/assay/flag tokens labs append (e.g. "Testosterone, Total, MS",
+    # "Estradiol, LCMSMS", "Vitamin D, IA"), and punctuation noise.
+    s = re.sub(
+        r"\b(serum|plasma|lc/ms-ms|lc/ms/ms|lcmsms|ms|ia|eia|cia|ecl|hplc|"
+        r"direct|total ms|calc|calculated|by .*)\b",
+        " ", s)
     s = s.replace(",", " ").replace(".", " ").replace("-", " ")
     s = re.sub(r"\s+", " ", s).strip()
     return s
@@ -116,6 +120,13 @@ def canonical_for(label: str) -> tuple[str | None, float]:
         return _SYNONYM_INDEX[raw], 1.0
 
     cleaned = _clean(label)
+    if not cleaned:
+        return None, 0.0
+    # Negated/derived analytes ("Non HDL Cholesterol", "Free T4 Index") are
+    # distinct from the base marker — don't let them fuzzy-match to it.
+    if cleaned.startswith("non ") or "ratio" in cleaned or "index" in cleaned:
+        if cleaned not in _SYNONYM_INDEX:
+            return None, 0.0
     if cleaned in _SYNONYM_INDEX:
         return _SYNONYM_INDEX[cleaned], 0.95
 
@@ -131,10 +142,13 @@ def canonical_for(label: str) -> tuple[str | None, float]:
         if cs == cleaned:
             return key, 0.95
         if f" {cs} " in padded or padded.strip() in f" {cs} ":
-            # prefer longer (more specific, more complete) matches
-            score = 0.7 * (min(len(cs), len(cleaned)) / max(len(cs), len(cleaned)))
+            # Score by how completely the synonym covers the printed label, so a
+            # near-complete match (e.g. "testosterone total ms") scores high and
+            # a partial one ("testosterone" inside "testosterone bioavailable")
+            # scores low enough to be rejected.
+            score = round(0.9 * (min(len(cs), len(cleaned)) / max(len(cs), len(cleaned))), 3)
             if score > best_score:
-                best_key, best_score = key, max(0.55, score)
+                best_key, best_score = key, score
     return best_key, best_score
 
 

@@ -22,21 +22,33 @@ from .models import MarkerSeries, Reading, ReferenceRange
 # Units we recognize on lab reports. Longer/more specific spellings first so
 # "ng/dL" is preferred over a bare "dL".
 KNOWN_UNITS = [
-    "x10E6/uL", "x10E3/uL", "10*6/uL", "10*3/uL", "M/uL", "K/uL",
-    "mg/dL", "ng/dL", "ng/mL", "pg/mL", "uIU/mL", "mIU/mL", "mIU/L",
-    "nmol/L", "umol/L", "mmol/L", "g/dL", "U/L", "IU/L", "%",
+    "Million/uL", "Thousand/uL", "x10E6/uL", "x10E3/uL", "10*6/uL", "10*3/uL",
+    "cells/uL", "M/uL", "K/uL",
+    "mg/dL", "ng/dL", "ng/mL", "pg/mL", "mcg/dL", "ug/dL", "uIU/mL", "mIU/mL",
+    "mIU/L", "nmol/L", "umol/L", "mmol/L", "g/dL", "mg/L", "U/L", "IU/L",
+    "fL", "pg", "%",
 ]
-_UNIT_RE = re.compile("(" + "|".join(re.escape(u) for u in KNOWN_UNITS) + ")")
+# Match units case-insensitively but keep the canonical spelling from the list.
+_UNIT_RE = re.compile("(" + "|".join(re.escape(u) for u in KNOWN_UNITS) + ")", re.I)
+_UNIT_CANON = {u.lower(): u for u in KNOWN_UNITS}
 
-# Reference-range shapes, in priority order.
+# Strip a leading "Reference Range:" / "Reference Interval:" label before parsing.
+_REF_LABEL = re.compile(r"reference\s+(range|interval)\s*:?", re.I)
+
+# Reference-range shapes, in priority order. The (?:or)?=? handles Quest's
+# "< OR = 39" / "> OR = 40" notation as well as "<=" / ">=" and plain "<200".
 _RANGE_BETWEEN = re.compile(r"(\d+(?:\.\d+)?)\s*[-–—]\s*(\d+(?:\.\d+)?)")
-_RANGE_UPPER = re.compile(r"[<≤]\s*(\d+(?:\.\d+)?)")
-_RANGE_LOWER = re.compile(r"[>≥]\s*(\d+(?:\.\d+)?)")
+_RANGE_UPPER = re.compile(r"[<≤]\s*(?:or\s*)?=?\s*(\d+(?:\.\d+)?)", re.I)
+_RANGE_LOWER = re.compile(r"[>≥]\s*(?:or\s*)?=?\s*(\d+(?:\.\d+)?)", re.I)
 
 _NUMBER = re.compile(r"-?\d+(?:\.\d+)?")
 _FLAG_WORDS = re.compile(r"\b(high|low|h|l|hi|lo|abnormal|normal|critical|aa)\b", re.I)
 
-CONFIDENCE_REVIEW_THRESHOLD = 0.80
+# Values below this extraction confidence are routed to human review. This is an
+# ACCURACY gate (did we read the number right), not the legal guardrail — that
+# (no interpretation) is never relaxed. Tunable via env without a code change.
+import os as _os
+CONFIDENCE_REVIEW_THRESHOLD = float(_os.environ.get("CONFIDENCE_REVIEW_THRESHOLD", "0.80"))
 
 # Date labels in rough priority order (collection date is what we want).
 _DATE_LABELS = [
@@ -118,11 +130,26 @@ def _parse_reference(text: str) -> tuple[ReferenceRange | None, str]:
         return ReferenceRange(low=lo, high=hi, raw=f"{m.group(1)}-{m.group(2)}"), m.group(0)
     m = _RANGE_UPPER.search(text)
     if m:
-        return ReferenceRange(high=float(m.group(1)), raw=f"<{m.group(1)}"), m.group(0)
+        incl = "=" in m.group(0) or "or" in m.group(0).lower()
+        sym = "≤" if incl else "<"
+        return ReferenceRange(high=float(m.group(1)), raw=f"{sym}{m.group(1)}"), m.group(0)
     m = _RANGE_LOWER.search(text)
     if m:
-        return ReferenceRange(low=float(m.group(1)), raw=f">{m.group(1)}"), m.group(0)
+        incl = "=" in m.group(0) or "or" in m.group(0).lower()
+        sym = "≥" if incl else ">"
+        return ReferenceRange(low=float(m.group(1)), raw=f"{sym}{m.group(1)}"), m.group(0)
     return None, ""
+
+
+def _standalone_reference(line: str) -> ReferenceRange | None:
+    """Parse a line that is essentially just a reference-range statement, e.g.
+    Quest's "Reference range: <100" printed on its own line below the value."""
+    s = line.strip()
+    if not _REF_LABEL.match(s):
+        return None
+    body = _REF_LABEL.sub(" ", s, count=1)
+    ref, _ = _parse_reference(body)
+    return ref
 
 
 def _parse_line(line: str) -> tuple[str, float, str, ReferenceRange, list[str], float] | None:
@@ -167,10 +194,10 @@ def _parse_line(line: str) -> tuple[str, float, str, ReferenceRange, list[str], 
     reference, range_text = _parse_reference(data_part)
     residual = data_part.replace(range_text, " ", 1) if range_text else data_part
 
-    # Unit.
+    # Unit (canonicalized to the spelling in KNOWN_UNITS).
     unit_m = _UNIT_RE.search(residual)
-    unit = unit_m.group(1) if unit_m else ""
-    if unit:
+    unit = _UNIT_CANON.get(unit_m.group(1).lower(), unit_m.group(1)) if unit_m else ""
+    if unit_m:
         residual = residual[: unit_m.start()] + " " + residual[unit_m.end():]
 
     # Strip flag words (High/Low/H/L) so they aren't mistaken for values.
@@ -209,9 +236,21 @@ def extract_document(doc: SourceDocument) -> tuple[list[Reading], list[str]]:
 
     readings: list[Reading] = []
     seen: set[str] = set()
+    last: Reading | None = None  # most recent reading, for next-line range attach
     for raw_line in doc.lines:
         parsed = _parse_line(raw_line)
         if not parsed:
+            # Some labs print the reference range on the line BELOW the value
+            # (e.g. Quest's LDL "Reference range: <100"). Attach it to the
+            # preceding marker if that one didn't carry its own range.
+            if last is not None and not last.reference.has_range:
+                ref = _standalone_reference(raw_line)
+                if ref is not None and ref.has_range:
+                    last.reference = ref
+                    last.review_flags = [f for f in last.review_flags
+                                         if "reference range" not in f]
+                    last.confidence = round(min(1.0, last.confidence / 0.90), 3)
+                    last = None
             continue
         label, value, unit, reference, review, conf = parsed
         canonical, _ = canonical_for(label)
@@ -227,7 +266,7 @@ def extract_document(doc: SourceDocument) -> tuple[list[Reading], list[str]]:
         if draw_date is None:
             review = review + ["draw date missing for this document"]
 
-        readings.append(Reading(
+        reading = Reading(
             canonical=canonical,
             display_name=label,
             value=value,
@@ -238,7 +277,9 @@ def extract_document(doc: SourceDocument) -> tuple[list[Reading], list[str]]:
             source_file=doc.name,
             source_text=raw_line.strip(),
             review_flags=review,
-        ))
+        )
+        readings.append(reading)
+        last = reading
     return readings, warnings
 
 
