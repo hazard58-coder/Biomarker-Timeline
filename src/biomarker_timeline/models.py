@@ -65,7 +65,7 @@ class Reading:
 
     canonical: str          # canonical marker key, e.g. "testosterone_total"
     display_name: str       # human label, e.g. "Testosterone, Total"
-    value: float
+    value: Optional[float]  # numeric value, or None for bounded/qualitative results
     unit: str
     reference: ReferenceRange
     draw_date: date
@@ -73,9 +73,19 @@ class Reading:
     source_file: str = ""
     source_text: str = ""   # the literal source line, for re-verification
     review_flags: list[str] = field(default_factory=list)
+    # For results that aren't a plain number — "<0.1", ">300", "Negative",
+    # "Detected". Transcribed verbatim; `value` stays None so it is never
+    # plotted or compared numerically (no invented numbers, no false flags).
+    value_text: str = ""
+
+    @property
+    def is_numeric(self) -> bool:
+        return self.value is not None
 
     @property
     def in_range(self) -> Optional[bool]:
+        if self.value is None:
+            return None
         return self.reference.contains(self.value)
 
     @property
@@ -89,7 +99,7 @@ class Reading:
         This is transcription of an arithmetic comparison, not a judgment about
         what the position means for the person.
         """
-        if not self.reference.has_range:
+        if self.value is None or not self.reference.has_range:
             return None
         if self.reference.low is not None and self.value < self.reference.low:
             return "below"
@@ -98,6 +108,8 @@ class Reading:
         return None
 
     def value_str(self) -> str:
+        if self.value is None:
+            return self.value_text or "—"
         return _fmt(self.value)
 
 
@@ -111,6 +123,14 @@ class MarkerSeries:
 
     def ordered(self) -> list[Reading]:
         return sorted(self.readings, key=lambda r: r.draw_date)
+
+    def numeric_ordered(self) -> list[Reading]:
+        """Date-ordered readings that have a plottable numeric value."""
+        return [r for r in self.ordered() if r.value is not None]
+
+    @property
+    def has_numeric(self) -> bool:
+        return any(r.value is not None for r in self.readings)
 
     @property
     def units(self) -> list[str]:

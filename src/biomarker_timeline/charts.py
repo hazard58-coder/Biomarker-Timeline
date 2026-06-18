@@ -36,7 +36,7 @@ _INTER_SB = fm.FontProperties(family="Inter", weight=600)
 
 def chart_png_b64(series: MarkerSeries, width_in: float = 6.6, height_in: float = 2.35) -> str:
     """Render one marker's trend chart and return base64-encoded PNG bytes."""
-    readings = series.ordered()
+    readings = series.numeric_ordered()
     dates = [r.draw_date for r in readings]
     values = [r.value for r in readings]
 

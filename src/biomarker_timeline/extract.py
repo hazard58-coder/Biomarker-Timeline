@@ -56,6 +56,15 @@ _RANGE_LOWER = re.compile(r"[>≥]\s*(?:or\s*)?=?\s*(\d+(?:\.\d+)?)", re.I)
 _NUMBER = re.compile(r"-?\d+(?:\.\d+)?")
 _FLAG_WORDS = re.compile(r"\b(high|low|h|l|hi|lo|abnormal|normal|critical|aa)\b", re.I)
 
+# A result value, found as the first whitespace-anchored token after the analyte
+# name. It may be numeric, a bounded form ("<0.1", "> 300"), or a qualitative
+# word — captured verbatim into value_text when not a plain number.
+_BOUNDED = r"[<>≤≥]\s*=?\s*\d+(?:\.\d+)?"
+_QUALITATIVE = (r"not\s+detected|detected|negative|positive|"
+                r"non[\s\-]?reactive|reactive")
+_VALUE_TOKEN = re.compile(
+    rf"(?:^|\s)({_BOUNDED}|-?\d+(?:\.\d+)?|{_QUALITATIVE})", re.I)
+
 # Values below this extraction confidence are routed to human review. This is an
 # ACCURACY gate (did we read the number right), not the legal guardrail — that
 # (no interpretation) is never relaxed. Tunable via env without a code change.
@@ -175,25 +184,26 @@ def _standalone_refunit(line: str) -> tuple[ReferenceRange | None, str]:
     return ref, unit
 
 
-def _parse_line(line: str) -> tuple[str, float, str, ReferenceRange, list[str], float] | None:
+def _parse_line(line: str):
     """Try to parse one line into a reading.
 
-    Returns (display_label, value, unit, reference, review_flags, confidence)
-    or None if the line is not a recognizable biomarker row.
+    Returns (display_label, value, value_text, unit, reference, review_flags,
+    confidence) or None if the line is not a recognizable biomarker row.
+    `value` is a float for numeric results, else None with the verbatim result in
+    `value_text` (e.g. "<0.1", "Negative").
     """
     if not line.strip():
         return None
 
-    # Locate where the numeric data begins: the first number that is NOT part
-    # of the analyte name. Analyte names occasionally contain digits (e.g.
-    # "Vitamin D, 25-Hydroxy") so we look for the first standalone number that
-    # is followed by unit/range-like content.
-    first_num = _VALUE_NUM.search(line)
-    if not first_num:
+    # The value is the first whitespace-anchored value token after the analyte
+    # name. Anchoring to whitespace means a digit inside the name (the "1" in
+    # "Hemoglobin A1c") is never taken as the result.
+    m = _VALUE_TOKEN.search(line)
+    if not m:
         return None
-    start = first_num.start(1)
-    label_part = line[:start].strip()
-    data_part = line[start:].strip()
+    val_raw = m.group(1).strip()
+    label_part = line[:m.start(1)].strip()
+    data_after = line[m.end(1):].strip()
 
     # Some labs (e.g. Quest) print the High/Low flag column BETWEEN the analyte
     # name and the value, so it lands at the tail of the label. Strip trailing
@@ -212,26 +222,22 @@ def _parse_line(line: str) -> tuple[str, float, str, ReferenceRange, list[str], 
     if not canonical or name_score < 0.5:
         return None
 
+    # Classify the value token.
+    value: float | None
+    value_text = ""
+    if re.fullmatch(r"-?\d+(?:\.\d+)?", val_raw):
+        value = float(val_raw)
+    else:
+        value = None
+        value_text = re.sub(r"\s+", "", val_raw) if re.match(_BOUNDED, val_raw) else val_raw
+
     review: list[str] = []
 
-    # Reference range first (so we can remove it before isolating the value).
-    reference, range_text = _parse_reference(data_part)
-    residual = data_part.replace(range_text, " ", 1) if range_text else data_part
-
-    # Unit (canonicalized to the spelling in KNOWN_UNITS).
-    unit_m = _UNIT_RE.search(residual)
+    # Reference range + unit come from the text AFTER the value, so a bounded
+    # value ("<0.1") is never confused with a bounded range ("<4.0").
+    reference, _range_text = _parse_reference(data_after)
+    unit_m = _UNIT_RE.search(data_after)
     unit = _UNIT_CANON.get(unit_m.group(1).lower(), unit_m.group(1)) if unit_m else ""
-    if unit_m:
-        residual = residual[: unit_m.start()] + " " + residual[unit_m.end():]
-
-    # Strip flag words (High/Low/H/L) so they aren't mistaken for values.
-    residual = _FLAG_WORDS.sub(" ", residual)
-
-    # The value is the first remaining standalone number.
-    nums = _NUMBER.findall(residual)
-    if not nums:
-        return None
-    value = float(nums[0])
 
     # ---- confidence ----
     conf = name_score
@@ -241,14 +247,10 @@ def _parse_line(line: str) -> tuple[str, float, str, ReferenceRange, list[str], 
     if reference is None:
         conf *= 0.90
         review.append("reference range not printed/parsed")
-    if len(nums) > 1:
-        # leftover numbers after removing range+unit -> value isolation ambiguous
-        conf *= 0.80
-        review.append(f"ambiguous value isolation (candidates: {', '.join(nums)})")
     conf = max(0.0, min(1.0, conf))
 
-    return (display_name(canonical), value, unit, reference or ReferenceRange(),
-            review, round(conf, 3))
+    return (display_name(canonical), value, value_text, unit,
+            reference or ReferenceRange(), review, round(conf, 3))
 
 
 def extract_document(doc: SourceDocument) -> tuple[list[Reading], list[str]]:
@@ -287,7 +289,7 @@ def extract_document(doc: SourceDocument) -> tuple[list[Reading], list[str]]:
                     if last.reference.has_range and last.unit:
                         last = None  # fully resolved
             continue
-        label, value, unit, reference, review, conf = parsed
+        label, value, value_text, unit, reference, review, conf = parsed
         canonical, _ = canonical_for(label)
         if canonical is None:
             continue
@@ -305,6 +307,7 @@ def extract_document(doc: SourceDocument) -> tuple[list[Reading], list[str]]:
             canonical=canonical,
             display_name=label,
             value=value,
+            value_text=value_text,
             unit=unit,
             reference=reference,
             draw_date=draw_date or date.min,

@@ -197,11 +197,15 @@ def _chart_block(ctx: ReportContext) -> str:
         if panel != current_panel:
             blocks.append(f"<div class='panel-label'>{_esc(panel)}</div>")
             current_panel = panel
-        img = chart_png_b64(s)
-        readings = s.ordered()
+        # Markers with only bounded/qualitative results ("<0.1", "Negative")
+        # can't be plotted — they appear as a value row (and in the table) only.
+        img_html = ""
+        if s.has_numeric:
+            img_html = (f'<img class="chart-img" '
+                        f'src="data:image/png;base64,{chart_png_b64(s)}"/>')
         # factual per-draw caption row
         cells = []
-        for r in readings:
+        for r in s.ordered():
             flag = ""
             if r.out_of_range:
                 pos = r.range_position() or "outside"
@@ -211,18 +215,20 @@ def _chart_block(ctx: ReportContext) -> str:
                 f"<span class='cap-val'>{_esc(r.value_str())} {_esc(r.unit)}</span>{flag}"
             )
         caption = " &nbsp;·&nbsp; ".join(cells)
-        flagnote = ""
+        comparable = any(r.value is not None and r.reference.has_range for r in s.readings)
         if s.n_out_of_range:
-            flagnote = (f"<span class='tag tag-flag'>{s.n_out_of_range} OUTSIDE LAB RANGE</span>")
-        else:
+            flagnote = f"<span class='tag tag-flag'>{s.n_out_of_range} OUTSIDE LAB RANGE</span>"
+        elif comparable:
             flagnote = "<span class='tag tag-inrange'>ALL INSIDE LAB RANGE</span>"
+        else:
+            flagnote = ""
         blocks.append(f"""
         <div class="chart-card avoid-break">
           <div class="chart-head">
             <span class="chart-name">{_esc(s.display_name)}</span>
             {flagnote}
           </div>
-          <img class="chart-img" src="data:image/png;base64,{img}"/>
+          {img_html}
           <div class="chart-cap">{caption}</div>
         </div>
         """)

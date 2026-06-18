@@ -102,6 +102,17 @@ def _check_values_verified(readings: list[Reading]) -> CheckResult:
         if not r.source_text:
             details.append(f"{r.display_name} ({r.source_file}): no source text retained")
             continue
+        if r.value is None:
+            # Bounded/qualitative result — verify the verbatim text appears in
+            # the source line (ignoring spaces, e.g. "< 0.1" vs "<0.1").
+            needle = re.sub(r"\s+", "", r.value_text).lower()
+            haystack = re.sub(r"\s+", "", r.source_text).lower()
+            if needle and needle in haystack:
+                continue
+            details.append(
+                f"{r.display_name} = {r.value_str()} not found in source line "
+                f"[{r.source_file}]: \"{r.source_text}\"")
+            continue
         src_nums = {float(n) for n in _NUMBER.findall(r.source_text)}
         if not any(abs(r.value - n) < 1e-6 for n in src_nums):
             details.append(
