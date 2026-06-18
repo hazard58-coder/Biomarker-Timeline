@@ -58,6 +58,23 @@ CLOSING_TEXT = (
     "means for you is a question for your physician."
 )
 
+# Optional coaching handoff (a SEPARATE service — this report never interprets).
+# Set COACHING_HANDOFF to custom text, or to "off" to hide it entirely.
+import os as _os  # noqa: E402
+_DEFAULT_HANDOFF = (
+    "Want a guided, plain-language walkthrough of this report? Vitalis Forge offers "
+    "coaching as a separate service — a conversation about your own data, distinct "
+    "from this document. For what your results mean medically, your licensed "
+    "physician is the right person."
+)
+
+
+def _handoff_text() -> str | None:
+    cfg = _os.environ.get("COACHING_HANDOFF", "").strip()
+    if cfg.lower() in ("off", "0", "none", "false", "no"):
+        return None
+    return cfg or _DEFAULT_HANDOFF
+
 
 @dataclass
 class ReportContext:
@@ -264,6 +281,14 @@ def _master_table(ctx: ReportContext) -> str:
 """
 
 
+def _handoff_html() -> str:
+    text = _handoff_text()
+    if not text:
+        return ""
+    return (f'<div class="handoff"><div class="handoff-h">A SEPARATE OPTION</div>'
+            f'<p>{_esc(text)}</p></div>')
+
+
 def _closing_html(ctx: ReportContext) -> str:
     return f"""
 <section class="page-break closing">
@@ -275,6 +300,7 @@ def _closing_html(ctx: ReportContext) -> str:
   <div class="panel" style="margin-top:16pt;">
     <p style="font-size:11pt; line-height:1.65;">{_esc(CLOSING_TEXT)}</p>
   </div>
+  {_handoff_html()}
   <div class="disclaimer-box" style="margin-top:20pt;">
     <div class="disclaimer-h">DISCLAIMER</div>
     <p>{_esc(COVER_DISCLAIMER)}</p>
@@ -353,6 +379,12 @@ def _report_css() -> str:
              border-top: 0.5pt solid {theme.HAIRLINE}; padding-top: 4pt; }}
 .cap-val {{ color: {theme.OFFWHITE}; font-weight: 600; }}
 .cap-date {{ color: {theme.MUTED}; }}
+
+.handoff {{ margin-top: 14pt; padding: 10pt 14pt; border-left: 2pt solid {theme.GOLD};
+  background: {theme.CHARCOAL}; border-radius: 3pt; }}
+.handoff-h {{ font-family: 'Oswald', sans-serif; font-weight: 600; font-size: 7.5pt;
+  letter-spacing: 0.14em; color: {theme.GOLD}; margin-bottom: 4pt; }}
+.handoff p {{ font-size: 9pt; color: {theme.MUTED}; margin: 0; line-height: 1.5; }}
 
 .closing h1 {{ color: {theme.OFFWHITE}; }}
 .signoff {{ margin-top: 26pt; border-top: 1.5pt solid {theme.COPPER}; padding-top: 8pt; }}

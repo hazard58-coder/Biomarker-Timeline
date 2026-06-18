@@ -228,6 +228,13 @@ granted with a signed, time-limited cookie.
 
 In Railway, add these under the service's **Variables** tab.
 
+**Report & extraction settings** (optional, apply to the CLI and the web service):
+
+| Variable | What it does |
+|----------|--------------|
+| `CONFIDENCE_REVIEW_THRESHOLD` | Extraction-accuracy gate (default `0.80`). Values read below this confidence are routed to human review. This is the accuracy knob — it does **not** relax the legal no-interpretation guardrail. |
+| `COACHING_HANDOFF` | Text for the closing-page "separate option" coaching handoff. Leave unset for the default wording, or set to `off` to hide it. The handoff describes a separate service only — the report itself never interprets. |
+
 ### Run the web service locally
 
 ```bash

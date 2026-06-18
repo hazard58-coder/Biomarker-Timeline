@@ -41,6 +41,12 @@ _VALUE_NUM = re.compile(r"(?:^|\s)(-?\d+(?:\.\d+)?)")
 # "Reference Range:", PWNHealth-style reports print "Desired Range:", etc.
 _REF_LABEL = re.compile(r"(reference|desired|normal|expected|ref)\s+(range|interval)\s*:?", re.I)
 
+# Words that mark a reference line as prose / conditional / interpretive — when
+# present we do NOT trust a number on that line as the marker's range.
+_REF_PROSE = re.compile(
+    r"\b(a\.?m|p\.?m|specimen|for\b|risk|desirable|optimal|consider|note|age|"
+    r"male|female|men|women|fasting|pre|post|pregnan|child|adult|year)\b", re.I)
+
 # Reference-range shapes, in priority order. The (?:or)?=? handles Quest's
 # "< OR = 39" / "> OR = 40" notation as well as "<=" / ">=" and plain "<200".
 _RANGE_BETWEEN = re.compile(r"(\d+(?:\.\d+)?)\s*[-–—]\s*(\d+(?:\.\d+)?)")
@@ -150,11 +156,19 @@ def _parse_reference(text: str) -> tuple[ReferenceRange | None, str]:
 def _standalone_refunit(line: str) -> tuple[ReferenceRange | None, str]:
     """Parse a line that is essentially just a range statement printed below the
     value, e.g. Quest's "Reference range: <100" or "Desired Range: 250-1100
-    ng/dL". Returns (range, unit) — the unit may live on this line too."""
+    ng/dL". Returns (range, unit) — the unit may live on this line too.
+
+    Lines that carry prose, time-of-day, or conditional/interpretive context
+    (e.g. cortisol's "For 8 a.m.(7-9 a.m.) Specimen: 4.0-22.0", or a functional
+    "Optimal <1.0" target) are rejected so we never transcribe the wrong numbers
+    or import a non-lab "optimal" range.
+    """
     s = line.strip()
     if not _REF_LABEL.match(s):
         return None, ""
     body = _REF_LABEL.sub(" ", s, count=1)
+    if _REF_PROSE.search(body):
+        return None, ""
     ref, _ = _parse_reference(body)
     unit_m = _UNIT_RE.search(body)
     unit = _UNIT_CANON.get(unit_m.group(1).lower(), unit_m.group(1)) if unit_m else ""

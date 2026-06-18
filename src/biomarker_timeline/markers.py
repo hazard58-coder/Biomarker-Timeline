@@ -53,7 +53,7 @@ MARKERS: list[MarkerDef] = [
               ("mIU/mL",)),
     MarkerDef("prolactin", "Prolactin", "Hormones",
               ("prolactin",), ("ng/mL",)),
-    MarkerDef("tsh", "Thyroid Stimulating Hormone (TSH)", "Hormones",
+    MarkerDef("tsh", "Thyroid Stimulating Hormone (TSH)", "Thyroid",
               ("tsh", "thyroid stimulating hormone", "thyroid-stimulating hormone"),
               ("uIU/mL", "mIU/L")),
     MarkerDef("psa", "Prostate Specific Antigen (PSA)", "Prostate",
@@ -81,9 +81,69 @@ MARKERS: list[MarkerDef] = [
     MarkerDef("triglycerides", "Triglycerides", "Lipid Panel",
               ("triglycerides", "triglycerides", "trig", "triglyceride"),
               ("mg/dL",)),
+    MarkerDef("apob", "Apolipoprotein B", "Lipid Panel",
+              ("apolipoprotein b", "apo b", "apob"), ("mg/dL",)),
+    # --- Thyroid ---
+    MarkerDef("free_t3", "Free T3", "Thyroid",
+              ("free t3", "ft3", "t3 free", "triiodothyronine free",
+               "triiodothyronine, free", "free triiodothyronine"),
+              ("pg/mL",)),
+    MarkerDef("free_t4", "Free T4", "Thyroid",
+              ("free t4", "ft4", "t4 free", "thyroxine free", "thyroxine, free",
+               "free thyroxine"),
+              ("ng/dL",)),
+    # --- Growth factors ---
+    MarkerDef("igf1", "Insulin-Like Growth Factor 1 (IGF-1)", "Growth Factors",
+              ("igf-1", "igf 1", "igf1", "insulin like growth factor 1",
+               "insulin-like growth factor 1", "somatomedin c", "somatomedin-c"),
+              ("ng/mL",)),
+    # --- Metabolic ---
+    MarkerDef("glucose", "Glucose, Fasting", "Metabolic",
+              ("glucose", "fasting glucose", "glucose fasting", "glucose serum"),
+              ("mg/dL",)),
+    MarkerDef("insulin", "Insulin, Fasting", "Metabolic",
+              ("insulin", "fasting insulin", "insulin fasting"),
+              ("uIU/mL",)),
+    MarkerDef("hemoglobin_a1c", "Hemoglobin A1c", "Metabolic",
+              ("hemoglobin a1c", "hba1c", "hgb a1c", "a1c", "glycohemoglobin",
+               "hemoglobin a1c (hba1c)"),
+              ("%",)),
+    # --- Inflammation ---
+    MarkerDef("hscrp", "hs-CRP", "Inflammation",
+              ("hs crp", "hscrp", "hs-crp", "high sensitivity crp",
+               "c reactive protein cardiac", "cardio crp", "c-reactive protein",
+               "c reactive protein"),
+              ("mg/L",)),
+    MarkerDef("homocysteine", "Homocysteine", "Inflammation",
+              ("homocysteine",), ("umol/L",)),
+    # --- Nutrients ---
+    MarkerDef("vitamin_d", "Vitamin D, 25-OH", "Nutrients",
+              ("vitamin d", "vitamin d 25 oh total", "vitamin d 25-hydroxy",
+               "25 hydroxyvitamin d", "25-oh vitamin d", "vitamin d,25-oh,total",
+               "vitamin d total"),
+              ("ng/mL",)),
+    MarkerDef("ferritin", "Ferritin", "Nutrients",
+              ("ferritin",), ("ng/mL",)),
+    MarkerDef("vitamin_b12", "Vitamin B12", "Nutrients",
+              ("vitamin b12", "b12", "cobalamin", "vitamin b-12"), ("pg/mL",)),
+    MarkerDef("folate", "Folate", "Nutrients",
+              ("folate", "folic acid", "folate serum"), ("ng/mL",)),
+    # --- Adrenal / DHEA ---
+    MarkerDef("cortisol", "Cortisol", "Adrenal",
+              ("cortisol", "cortisol total", "cortisol, total"), ("mcg/dL",)),
+    MarkerDef("dhea_s", "DHEA-Sulfate", "Adrenal",
+              ("dhea sulfate", "dhea-s", "dheas", "dhea-sulfate",
+               "dehydroepiandrosterone sulfate"),
+              ("mcg/dL",)),
+    MarkerDef("progesterone", "Progesterone", "Hormones",
+              ("progesterone",), ("ng/mL",)),
 ]
 
-_PANEL_ORDER = ["Androgens", "Hormones", "Prostate", "Complete Blood Count", "Lipid Panel"]
+_PANEL_ORDER = [
+    "Androgens", "Hormones", "Prostate", "Thyroid", "Growth Factors",
+    "Metabolic", "Lipid Panel", "Inflammation", "Complete Blood Count",
+    "Nutrients", "Adrenal",
+]
 
 # Build lookup tables.
 _BY_KEY: dict[str, MarkerDef] = {m.key: m for m in MARKERS}
@@ -124,8 +184,7 @@ def canonical_for(label: str) -> tuple[str | None, float]:
         return None, 0.0
     # Negated/derived analytes ("Non HDL Cholesterol", "Free T4 Index") are
     # distinct from the base marker — don't let them fuzzy-match to it.
-    if (cleaned.startswith("non ") or "ratio" in cleaned or "index" in cleaned
-            or "a1c" in cleaned):
+    if cleaned.startswith("non ") or "ratio" in cleaned or "index" in cleaned:
         if cleaned not in _SYNONYM_INDEX:
             return None, 0.0
     if cleaned in _SYNONYM_INDEX:
