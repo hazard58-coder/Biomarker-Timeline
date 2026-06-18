@@ -16,9 +16,12 @@ A paid Checkout session or a valid code mints a token good for ACCESS_TTL_SECOND
 
 from __future__ import annotations
 
+import logging
 import os
 
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
+
+_log = logging.getLogger("biomarker.gate")
 
 COOKIE_NAME = "bt_access"
 
@@ -229,25 +232,27 @@ def checkout_session_info(session_id: str) -> dict:
     stripe.api_key = STRIPE_SECRET_KEY
     try:
         session = stripe.checkout.Session.retrieve(session_id)
+
+        customer = session.get("customer")
+        email = (session.get("customer_details") or {}).get("email")
+
+        if session.get("mode") == "subscription":
+            active = session.get("payment_status") == "paid" and bool(session.get("subscription"))
+            if active:
+                sub_id = session.get("subscription")
+                try:
+                    sub = stripe.Subscription.retrieve(sub_id)
+                    active = sub.get("status") in ("active", "trialing")
+                except Exception:
+                    _log.exception("could not retrieve subscription for session %s", session_id)
+            return {"active": active, "plan": "sub", "customer": customer, "email": email}
+
+        return {"active": session.get("payment_status") == "paid",
+                "plan": "once", "customer": customer, "email": email}
     except Exception:
+        # Log the real cause (it shows up in Railway logs) instead of swallowing it.
+        _log.exception("checkout_session_info failed for session %s", session_id)
         return {"active": False, "plan": "once", "customer": None, "email": None}
-
-    customer = session.get("customer")
-    email = (session.get("customer_details") or {}).get("email")
-
-    if session.get("mode") == "subscription":
-        active = session.get("payment_status") == "paid" and bool(session.get("subscription"))
-        if active:
-            sub_id = session.get("subscription")
-            try:
-                sub = stripe.Subscription.retrieve(sub_id)
-                active = sub.get("status") in ("active", "trialing")
-            except Exception:
-                pass
-        return {"active": active, "plan": "sub", "customer": customer, "email": email}
-
-    return {"active": session.get("payment_status") == "paid",
-            "plan": "once", "customer": customer, "email": email}
 
 
 def checkout_session_status(session_id: str) -> tuple[bool, str]:

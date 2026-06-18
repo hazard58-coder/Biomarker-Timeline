@@ -30,6 +30,8 @@ sys.path.insert(0, str(ROOT / "src"))
 from flask import (  # noqa: E402
     Flask, Response, make_response, redirect, request, send_file,
 )
+import logging  # noqa: E402
+
 from werkzeug.utils import secure_filename  # noqa: E402
 
 import gate  # noqa: E402
@@ -38,6 +40,9 @@ import store  # noqa: E402
 from biomarker_timeline.pipeline import run_pipeline  # noqa: E402
 
 ACCOUNT_COOKIE = "bt_account"
+
+logging.basicConfig(level=logging.INFO,
+                    format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 40 * 1024 * 1024  # 40 MB total upload cap
@@ -399,7 +404,16 @@ def upload_page() -> Response:
     # Returning from a successful Stripe Checkout.
     session_id = request.args.get("session_id")
     if session_id and gate.stripe_configured():
-        info = gate.checkout_session_info(session_id)
+        try:
+            info = gate.checkout_session_info(session_id)
+        except Exception:
+            app.logger.exception("checkout return failed for session %s", session_id)
+            return Response(_info_page(
+                "We're confirming your payment",
+                "Your payment went through, but we hit a snag confirming it just now. "
+                "Please refresh in a moment. If it persists, email "
+                "contact@vitalisforge.com with your receipt and we'll sort it out."),
+                mimetype="text/html", status=503)
         if info["active"]:
             resp = make_response(_upload_form())
             _grant_cookie(resp, "stripe", session_id, info["plan"])
@@ -579,6 +593,17 @@ def generate() -> Response:
     download_name = f"{base}_Biomarker_Timeline_{date.today().isoformat()}.pdf"
     return send_file(io.BytesIO(data), mimetype="application/pdf",
                      as_attachment=True, download_name=download_name)
+
+
+@app.errorhandler(Exception)
+def _unhandled(e) -> Response:
+    from werkzeug.exceptions import HTTPException
+    if isinstance(e, HTTPException):
+        return e  # let 404/413/etc. behave normally
+    app.logger.exception("Unhandled error on %s %s", request.method, request.path)
+    return Response(_error_page(
+        "Something went wrong on our end. Please try again, or email "
+        "contact@vitalisforge.com."), mimetype="text/html", status=500)
 
 
 @app.errorhandler(413)
