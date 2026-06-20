@@ -146,10 +146,14 @@ def _upload_form(error: str | None = None) -> str:
     err_html = ""
     if error:
         err_html = f'<div class="card err"><b>{error}</b></div>'
-    portal_link = ""
-    if _read_account():
-        portal_link = ('<p class="hintrow">Subscriber? '
-                       '<a href="/portal">Manage your subscription →</a></p>')
+    email = _account_email()
+    acct_bar = ""
+    if email:
+        who = f"{_escape(email)}{' (admin)' if gate.is_admin(email) else ''}"
+        acct_bar = (f'<p class="hintrow">Signed in as {who} · '
+                    f'<a href="/portal">Manage subscription</a> · '
+                    f'<a href="/logout">Sign out</a></p>')
+    portal_link = acct_bar
     return _page("Build your Biomarker Timeline", f"""
     <div class="spacer"></div>
     <div class="kicker">Biomarker Timeline</div>
@@ -423,11 +427,17 @@ def _valid_email(email: str) -> bool:
     return bool(_EMAIL_RE.match((email or "").strip()))
 
 
+def _is_admin() -> bool:
+    return gate.is_admin(_account_email())
+
+
 def _entitlement(email: str) -> str | None:
-    """What the signed-in account may do right now: 'subscription' (unlimited),
-    'credit' (>=1 unused report credit), or None (must purchase)."""
+    """What the signed-in account may do right now: 'admin' (unlimited, free),
+    'subscription' (unlimited), 'credit' (>=1 unused report credit), or None."""
     if not email:
         return None
+    if gate.is_admin(email):
+        return "admin"
     if gate.stripe_configured() and gate.email_has_active_subscription(email):
         return "subscription"
     if store.available_credits(email) > 0:
@@ -487,6 +497,9 @@ def _app_account_mode() -> Response:
 
 @app.get("/app")
 def upload_page() -> Response:
+    # Admin accounts (signed in) get straight through, in any mode.
+    if _is_admin():
+        return Response(_upload_form(), mimetype="text/html")
     if gate.LOGIN_REQUIRED:
         return _app_account_mode()
 
@@ -697,6 +710,10 @@ def _run_report(on_success) -> Response:
 
 @app.post("/generate")
 def generate() -> Response:
+    # Admin accounts generate freely, unmetered, in any mode.
+    if _is_admin():
+        return _run_report(None)
+
     # ---- account mode: entitlement is a subscription or a report credit ----
     if gate.LOGIN_REQUIRED:
         email = _account_email()

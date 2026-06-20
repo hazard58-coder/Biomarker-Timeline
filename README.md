@@ -195,6 +195,7 @@ granted with a signed, time-limited cookie.
 | `ACCOUNT_TTL_SECONDS` | *(optional)* How long a signed-in account stays signed in (default `2592000` = 30 days). |
 | `LOGIN_REQUIRED` | *(optional)* Set to `1` for **account-first mode**: visitors sign in (email magic link) before buying or generating. Off by default (guest checkout). Requires email (SMTP) configured. |
 | `DEV_SHOW_MAGIC_LINK` | *(testing only)* Set to `1` to show the sign-in link on screen when SMTP isn't configured, so you can test account mode without email. **Never enable in production** — it lets anyone sign in as any email. |
+| `ADMIN_EMAILS` | Comma-separated admin emails with unlimited free access once signed in (default `hazard58@gmail.com`). |
 | `MAGIC_LINK_TTL_SECONDS` | *(optional)* How long a sign-in link is valid (default `1800` = 30 min). |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USERNAME` / `SMTP_PASSWORD` / `MAIL_FROM` | Email settings for sending subscriber sign-in links. Without these, subscriber email sign-in is disabled (they're told to email you). |
 
@@ -243,6 +244,21 @@ granted with a signed, time-limited cookie.
 
 Both keep the legal guardrail identical — the self-check runs on every report
 regardless of how access was granted.
+
+### Coupon / discount codes
+
+Stripe's checkout page shows an **"Add promotion code"** field automatically. You
+create the actual codes in the **Stripe Dashboard → Product catalog → Coupons**:
+make a coupon (e.g. *15% off*, *25% off*, *50% off*, *100% off*), then add a
+**promotion code** (the text customers type, e.g. `SAVE15`). Stripe validates and
+redeems them — no app changes needed. A 100%-off code makes the report free
+through normal checkout (it still becomes a report credit for that account).
+
+### Admin access
+
+Emails in `ADMIN_EMAILS` (default `hazard58@gmail.com`) get **unlimited free
+access** once signed in — sign in at `/login` with that email, and `/app`/
+`/generate` work with no payment. Use it for yourself and comped accounts.
 
 In Railway, add these under the service's **Variables** tab.
 

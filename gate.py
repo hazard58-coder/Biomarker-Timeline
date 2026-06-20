@@ -57,6 +57,13 @@ LOGIN_REQUIRED = os.environ.get("LOGIN_REQUIRED", "").strip().lower() in ("1", "
 # Testing aid: when SMTP isn't configured, show the magic link on screen instead
 # of emailing it. NEVER enable in production — it lets anyone sign in as any email.
 DEV_SHOW_MAGIC_LINK = os.environ.get("DEV_SHOW_MAGIC_LINK", "").strip().lower() in ("1", "true", "yes", "on")
+# Admin accounts get unlimited free access (no payment) once signed in.
+ADMIN_EMAILS = {e.strip().lower() for e in
+                os.environ.get("ADMIN_EMAILS", "hazard58@gmail.com").split(",") if e.strip()}
+
+
+def is_admin(email: str | None) -> bool:
+    return bool(email) and email.strip().lower() in ADMIN_EMAILS
 _GATE_SECRET = (os.environ.get("GATE_SECRET")
                 or os.environ.get("SECRET_KEY")
                 or "dev-insecure-secret-change-me-in-production")
@@ -198,6 +205,9 @@ def create_checkout_session(base_url: str, plan: str = "once",
         "line_items": [line_item],
         "success_url": f"{base_url}/app?session_id={{CHECKOUT_SESSION_ID}}",
         "cancel_url": f"{base_url}/app?canceled=1",
+        # Shows a "Add promotion code" field on Stripe's checkout page. Create the
+        # actual codes (15%/25%/50%/100% off) in the Stripe Dashboard.
+        "allow_promotion_codes": True,
     }
     if customer_email:
         params["customer_email"] = customer_email.strip()
