@@ -212,7 +212,9 @@ def _paywall(canceled: bool = False, error: str | None = None,
           </form>
           <p class="hintrow">Secure checkout via Stripe. You'll come right back here
             to upload your labs.</p>
-        </div>"""
+        </div>
+        <p class="hintrow">Have a coupon? Add it in the <b>promotion code</b> field
+          on the checkout page.</p>"""
 
     code_block = ""
     if gate.codes_configured():
