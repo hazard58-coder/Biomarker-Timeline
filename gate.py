@@ -50,6 +50,13 @@ STRIPE_SUBSCRIPTION_PRICE_ID = os.environ.get("STRIPE_SUBSCRIPTION_PRICE_ID", ""
 ACCESS_TTL_SECONDS = int(os.environ.get("ACCESS_TTL_SECONDS", str(2 * 60 * 60)))  # 2 hours
 ACCOUNT_TTL_SECONDS = int(os.environ.get("ACCOUNT_TTL_SECONDS", str(30 * 24 * 60 * 60)))  # 30 days
 MAGIC_LINK_TTL_SECONDS = int(os.environ.get("MAGIC_LINK_TTL_SECONDS", str(30 * 60)))  # 30 min
+
+# Account-first mode: when on, visitors sign in (email magic link) before buying
+# or generating. Off by default so guest checkout keeps working until email is set.
+LOGIN_REQUIRED = os.environ.get("LOGIN_REQUIRED", "").strip().lower() in ("1", "true", "yes", "on")
+# Testing aid: when SMTP isn't configured, show the magic link on screen instead
+# of emailing it. NEVER enable in production — it lets anyone sign in as any email.
+DEV_SHOW_MAGIC_LINK = os.environ.get("DEV_SHOW_MAGIC_LINK", "").strip().lower() in ("1", "true", "yes", "on")
 _GATE_SECRET = (os.environ.get("GATE_SECRET")
                 or os.environ.get("SECRET_KEY")
                 or "dev-insecure-secret-change-me-in-production")
@@ -141,10 +148,13 @@ def read_magic_token(token: str | None) -> str | None:
 
 
 # --- Stripe Checkout ---
-def create_checkout_session(base_url: str, plan: str = "once") -> str:
+def create_checkout_session(base_url: str, plan: str = "once",
+                            customer_email: str = "") -> str:
     """Create a Stripe Checkout Session and return its hosted URL.
 
     `plan` is 'once' (one-time $79 report) or 'monthly' (recurring $29/mo).
+    `customer_email`, when given, prefills checkout and ties the purchase to that
+    account email.
     `base_url` is the public origin, used to build the success/cancel URLs.
     """
     import stripe
@@ -183,12 +193,15 @@ def create_checkout_session(base_url: str, plan: str = "once") -> str:
                     },
                 },
             }
-    session = stripe.checkout.Session.create(
-        mode=mode,
-        line_items=[line_item],
-        success_url=f"{base_url}/app?session_id={{CHECKOUT_SESSION_ID}}",
-        cancel_url=f"{base_url}/app?canceled=1",
-    )
+    params = {
+        "mode": mode,
+        "line_items": [line_item],
+        "success_url": f"{base_url}/app?session_id={{CHECKOUT_SESSION_ID}}",
+        "cancel_url": f"{base_url}/app?canceled=1",
+    }
+    if customer_email:
+        params["customer_email"] = customer_email.strip()
+    session = stripe.checkout.Session.create(**params)
     return session.url
 
 
@@ -226,6 +239,29 @@ def find_active_subscription_customer(email: str) -> str | None:
         if subscription_active(cust_id):
             return cust_id
     return None
+
+
+def email_has_active_subscription(email: str) -> bool:
+    """True if any Stripe customer with this email has an active subscription."""
+    return find_active_subscription_customer(email) is not None
+
+
+def customer_id_for_email(email: str) -> str | None:
+    """Return a Stripe customer id for this email (active-sub customer preferred),
+    for opening the billing portal."""
+    cid = find_active_subscription_customer(email)
+    if cid:
+        return cid
+    if not email:
+        return None
+    import stripe
+    stripe.api_key = STRIPE_SECRET_KEY
+    try:
+        customers = stripe.Customer.list(email=email.strip(), limit=1)
+    except Exception:
+        return None
+    data = _sg(customers, "data") or []
+    return _sg(data[0], "id") if data else None
 
 
 def create_billing_portal_session(customer_id: str, return_url: str) -> str:

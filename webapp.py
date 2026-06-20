@@ -283,14 +283,22 @@ def _already_used_page() -> str:
     """)
 
 
-def _signin_form(error: str | None = None) -> str:
+def _signin_form(error: str | None = None, start: bool = False) -> str:
     err_html = f'<div class="card err"><b>{_escape(error)}</b></div>' if error else ""
-    return _page("Subscriber sign-in", f"""
+    if start:
+        heading = "Sign in to get started."
+        blurb = ("Enter your email and we'll send you a sign-in link. New here? "
+                 "You'll choose a report or subscription right after you sign in.")
+        footer = ""
+    else:
+        heading = "Sign in."
+        blurb = ("Enter your email and we'll send you a sign-in link.")
+        footer = '<p class="hintrow">New here? <a href="/app">Get started →</a></p>'
+    return _page("Sign in — Biomarker Timeline", f"""
     <div class="spacer"></div>
     <div class="kicker">Biomarker Timeline</div>
-    <h1 class="title">Subscriber sign-in.</h1>
-    <p>Already on the monthly plan? Enter the email you subscribed with and we'll
-      send you a sign-in link.</p>
+    <h1 class="title">{heading}</h1>
+    <p>{blurb}</p>
     <hr class="rule"/>
     {err_html}
     <form class="card" action="/login" method="post">
@@ -299,7 +307,7 @@ def _signin_form(error: str | None = None) -> str:
       <div class="spacer"></div>
       <button class="btn" type="submit">Email me a sign-in link</button>
     </form>
-    <p class="hintrow">Not a subscriber yet? <a href="/app">Get a report →</a></p>
+    {footer}
     """)
 
 
@@ -400,6 +408,33 @@ def _read_account() -> dict | None:
     return gate.read_account_token(request.cookies.get(ACCOUNT_COOKIE))
 
 
+def _account_email() -> str | None:
+    acct = _read_account()
+    if not acct:
+        return None
+    email = (acct.get("email") or "").strip().lower()
+    return email or None
+
+
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _valid_email(email: str) -> bool:
+    return bool(_EMAIL_RE.match((email or "").strip()))
+
+
+def _entitlement(email: str) -> str | None:
+    """What the signed-in account may do right now: 'subscription' (unlimited),
+    'credit' (>=1 unused report credit), or None (must purchase)."""
+    if not email:
+        return None
+    if gate.stripe_configured() and gate.email_has_active_subscription(email):
+        return "subscription"
+    if store.available_credits(email) > 0:
+        return "credit"
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -420,8 +455,41 @@ def healthz() -> Response:
     return Response("ok", mimetype="text/plain")
 
 
+def _app_account_mode() -> Response:
+    """Account-first /app: sign in, then buy/subscribe, then generate."""
+    email = _account_email()
+
+    # Returning from Stripe Checkout — record the purchase against the account.
+    session_id = request.args.get("session_id")
+    if session_id and gate.stripe_configured() and email:
+        try:
+            info = gate.checkout_session_info(session_id)
+        except Exception:
+            app.logger.exception("checkout return failed for session %s", session_id)
+            return Response(_info_page(
+                "We're confirming your payment",
+                "Your payment went through, but we hit a snag confirming it. Please "
+                "refresh in a moment, or email contact@vitalisforge.com with your "
+                "receipt."), mimetype="text/html", status=503)
+        if info["active"] and info["plan"] == "once":
+            store.add_credit(session_id, email)  # one report credit for this account
+        # subscriptions need no local record — Stripe is the source of truth
+
+    if not email:
+        return Response(_signin_form(start=True), mimetype="text/html")
+
+    ent = _entitlement(email)
+    if ent:
+        return Response(_upload_form(), mimetype="text/html")
+    return Response(_paywall(canceled=bool(request.args.get("canceled"))),
+                    mimetype="text/html")
+
+
 @app.get("/app")
 def upload_page() -> Response:
+    if gate.LOGIN_REQUIRED:
+        return _app_account_mode()
+
     # Open tool if no gating configured.
     if not gate.gating_enabled():
         return Response(_upload_form(), mimetype="text/html")
@@ -471,9 +539,13 @@ def checkout() -> Response:
     if not gate.stripe_configured():
         return Response(_paywall(error="Online payment isn't configured yet."),
                         mimetype="text/html", status=400)
+    # In account mode you must be signed in first, so the purchase ties to you.
+    if gate.LOGIN_REQUIRED and not _account_email():
+        return redirect("/login", code=303)
     plan = "monthly" if request.form.get("plan") == "monthly" else "once"
     try:
-        url = gate.create_checkout_session(_base_url(), plan)
+        url = gate.create_checkout_session(_base_url(), plan,
+                                           customer_email=_account_email() or "")
     except Exception as exc:
         return Response(_paywall(error=f"Couldn't start checkout ({exc})."),
                         mimetype="text/html", status=502)
@@ -498,30 +570,36 @@ def login_page() -> Response:
 @app.post("/login")
 def login() -> Response:
     email = (request.form.get("email") or "").strip()
-    # Always show the same confirmation, so we never reveal who has a subscription.
-    sent_page = _info_page(
-        "Check your email",
-        "If that address has an active subscription, a sign-in link is on its way. "
-        "The link works for 30 minutes.")
+    if not _valid_email(email):
+        return Response(_signin_form("Please enter a valid email address.",
+                                     start=gate.LOGIN_REQUIRED),
+                        mimetype="text/html", status=400)
 
-    if not email or not gate.stripe_configured():
-        return Response(sent_page, mimetype="text/html")
+    link = f"{_base_url()}/verify?token={gate.issue_magic_token(email)}"
 
-    customer_id = gate.find_active_subscription_customer(email)
-    if customer_id and mailer.mail_configured():
-        link = f"{_base_url()}/verify?token={gate.issue_magic_token(email)}"
+    # Testing aid: when email isn't configured, show the link on screen.
+    if gate.DEV_SHOW_MAGIC_LINK and not mailer.mail_configured():
+        return Response(_info_page(
+            "Dev sign-in link",
+            "Email isn't configured, so here's your one-time sign-in link "
+            "(testing only). It works for 30 minutes:")
+            .replace("</p>", f'</p><div class="card"><a href="{link}">{link}</a></div>', 1),
+            mimetype="text/html")
+
+    if mailer.mail_configured():
         try:
             mailer.send_magic_link(email, link)
         except Exception:
-            pass  # don't leak delivery state to the visitor
-    elif customer_id and not mailer.mail_configured():
-        # Subscription exists but we can't email — tell them how to reach a human.
+            app.logger.exception("failed to send sign-in link to %s", email)
         return Response(_info_page(
-            "Almost there",
-            "You have an active subscription, but automated email isn't set up yet. "
-            "Email contact@vitalisforge.com and we'll send your sign-in link."),
-            mimetype="text/html")
-    return Response(sent_page, mimetype="text/html")
+            "Check your email",
+            "If that address is valid, a sign-in link is on its way. It works for "
+            "30 minutes."), mimetype="text/html")
+
+    return Response(_info_page(
+        "Email isn't set up yet",
+        "Sign-in links are sent by email, which isn't configured yet. Email "
+        "contact@vitalisforge.com and we'll help you in."), mimetype="text/html")
 
 
 @app.get("/verify")
@@ -532,26 +610,30 @@ def verify() -> Response:
             "Link expired",
             "That sign-in link is invalid or has expired. Request a new one."),
             mimetype="text/html", status=400)
-    customer_id = gate.find_active_subscription_customer(email) if gate.stripe_configured() else None
-    if not customer_id:
-        return Response(_info_page(
-            "No active subscription",
-            "We couldn't find an active subscription for that address. If you think "
-            "this is a mistake, email contact@vitalisforge.com."),
-            mimetype="text/html", status=403)
+    # Any verified email is a valid account. Entitlement (subscription/credits)
+    # is checked at /app — signing in by itself grants no paid access.
+    cid = gate.customer_id_for_email(email) if gate.stripe_configured() else None
     resp = make_response(redirect("/app", code=303))
-    _grant_cookie(resp, "stripe", f"acct:{customer_id}", "sub")
-    _set_account_cookie(resp, customer_id, email)
+    _set_account_cookie(resp, cid or "", email)
+    return resp
+
+
+@app.get("/logout")
+def logout() -> Response:
+    resp = make_response(redirect("/", code=303))
+    resp.delete_cookie(ACCOUNT_COOKIE)
+    resp.delete_cookie(gate.COOKIE_NAME)
     return resp
 
 
 @app.get("/portal")
 def portal() -> Response:
-    acct = _read_account()
-    if not (acct and gate.stripe_configured()):
+    email = _account_email()
+    cid = gate.customer_id_for_email(email) if (email and gate.stripe_configured()) else None
+    if not cid:
         return redirect("/login", code=303)
     try:
-        url = gate.create_billing_portal_session(acct.get("cust"), f"{_base_url()}/app")
+        url = gate.create_billing_portal_session(cid, f"{_base_url()}/app")
     except Exception:
         return Response(_info_page(
             "Couldn't open the billing portal",
@@ -560,26 +642,11 @@ def portal() -> Response:
     return redirect(url, code=303)
 
 
-@app.post("/generate")
-def generate() -> Response:
-    if not _has_access():
-        return redirect("/app", code=303)
-
-    # Strict one-report-per-payment for the ONE-TIME plan: a paid session may
-    # produce exactly one delivered report. The MONTHLY subscription is not
-    # metered (it covers ongoing updates), and trial-code access is
-    # operator-controlled. We check consumption up front, and only mark the
-    # session consumed AFTER a report is delivered, so a self-check failure never
-    # burns the customer's payment.
-    payload = gate.read_token(request.cookies.get(gate.COOKIE_NAME))
-    paid_session_id = None
-    if payload and payload.get("k") == "stripe" and payload.get("plan") != "sub":
-        paid_session_id = payload.get("ref")
-        if paid_session_id and store.is_consumed(paid_session_id):
-            # Already used — send back to the paywall (which shows the "previous
-            # report complete, buy another" note) instead of a dead end.
-            return redirect("/app", code=303)
-
+def _run_report(on_success) -> Response:
+    """Shared report runner: validate uploads, run the pipeline, and on a clean
+    self-check deliver the PDF (calling `on_success` once, just before delivery,
+    to consume the entitlement). The guardrail is identical in every access mode.
+    """
     uploads = [f for f in request.files.getlist("labs")
                if f and f.filename and f.filename.lower().endswith(".pdf")]
     if not uploads:
@@ -618,14 +685,43 @@ def generate() -> Response:
         # Success — read the bytes before the temp dir is cleaned up.
         data = out_pdf.read_bytes()
 
-    # Report delivered: now (and only now) consume the payment.
-    if paid_session_id:
-        store.mark_consumed(paid_session_id, note="report delivered")
+    # Report delivered: now (and only now) consume the entitlement.
+    if on_success:
+        on_success()
 
     base = _safe_slug(client_name) if client_name else "Client"
     download_name = f"{base}_Biomarker_Timeline_{date.today().isoformat()}.pdf"
     return send_file(io.BytesIO(data), mimetype="application/pdf",
                      as_attachment=True, download_name=download_name)
+
+
+@app.post("/generate")
+def generate() -> Response:
+    # ---- account mode: entitlement is a subscription or a report credit ----
+    if gate.LOGIN_REQUIRED:
+        email = _account_email()
+        if not email:
+            return redirect("/login", code=303)
+        ent = _entitlement(email)
+        if not ent:
+            return redirect("/app", code=303)
+        if ent == "credit":
+            return _run_report(lambda: store.consume_credit(email, note="report delivered"))
+        return _run_report(None)  # active subscription — unlimited, nothing to consume
+
+    # ---- guest mode: entitlement is the access cookie + one-time session ----
+    if not _has_access():
+        return redirect("/app", code=303)
+    payload = gate.read_token(request.cookies.get(gate.COOKIE_NAME))
+    paid_session_id = None
+    if payload and payload.get("k") == "stripe" and payload.get("plan") != "sub":
+        paid_session_id = payload.get("ref")
+        if paid_session_id and store.is_consumed(paid_session_id):
+            return redirect("/app", code=303)
+    if paid_session_id:
+        return _run_report(lambda sid=paid_session_id:
+                           store.mark_consumed(sid, note="report delivered"))
+    return _run_report(None)
 
 
 @app.errorhandler(Exception)

@@ -192,7 +192,9 @@ granted with a signed, time-limited cookie.
 | `GATE_SECRET` | Secret used to sign access cookies. **Set this in production** to a long random string. |
 | `ACCESS_TTL_SECONDS` | *(optional)* How long the access cookie lasts after payment/unlock (default `7200` = 2 h). |
 | `ENTITLEMENT_DB` | *(optional)* Path to the SQLite store that records consumed payments (default `data/entitlements.db`). |
-| `ACCOUNT_TTL_SECONDS` | *(optional)* How long a subscriber stays signed in (default `2592000` = 30 days). |
+| `ACCOUNT_TTL_SECONDS` | *(optional)* How long a signed-in account stays signed in (default `2592000` = 30 days). |
+| `LOGIN_REQUIRED` | *(optional)* Set to `1` for **account-first mode**: visitors sign in (email magic link) before buying or generating. Off by default (guest checkout). Requires email (SMTP) configured. |
+| `DEV_SHOW_MAGIC_LINK` | *(testing only)* Set to `1` to show the sign-in link on screen when SMTP isn't configured, so you can test account mode without email. **Never enable in production** — it lets anyone sign in as any email. |
 | `MAGIC_LINK_TTL_SECONDS` | *(optional)* How long a sign-in link is valid (default `1800` = 30 min). |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USERNAME` / `SMTP_PASSWORD` / `MAIL_FROM` | Email settings for sending subscriber sign-in links. Without these, subscriber email sign-in is disabled (they're told to email you). |
 
@@ -225,6 +227,22 @@ granted with a signed, time-limited cookie.
 > service and set `ENTITLEMENT_DB` to a path on it (e.g. `/data/entitlements.db`).
 > Without a volume, the only downside is a customer could regenerate a report they
 > already received after a redeploy — a paid entitlement is never lost.
+
+### Two access models
+
+- **Guest checkout (default).** Visitor pays → gets their report → can buy another.
+  Identity is a short-lived cookie; one-time payments are metered by the SQLite
+  store. Simplest; nothing to configure beyond Stripe.
+- **Account-first (`LOGIN_REQUIRED=1`).** Visitor signs in with an **email magic
+  link**, then buys or subscribes. Purchases attach to their **account**: each
+  one-time payment is a **report credit**, a subscription is unlimited while
+  active, and they can return anytime and sign back in. This is the durable model
+  for repeat customers. It needs **SMTP configured** (to send sign-in links); for
+  testing without email, set `DEV_SHOW_MAGIC_LINK=1`. Stripe stays the source of
+  truth for subscriptions; the store tracks one-time credits per email.
+
+Both keep the legal guardrail identical — the self-check runs on every report
+regardless of how access was granted.
 
 In Railway, add these under the service's **Variables** tab.
 
