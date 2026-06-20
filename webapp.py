@@ -175,10 +175,15 @@ def _upload_form(error: str | None = None) -> str:
     """)
 
 
-def _paywall(canceled: bool = False, error: str | None = None) -> str:
+def _paywall(canceled: bool = False, error: str | None = None,
+             used: bool = False) -> str:
     cancel_html = ('<div class="card err"><b>Payment canceled — you have not been '
                    'charged. You can try again whenever you\'re ready.</b></div>'
                    if canceled else "")
+    used_html = ('<div class="card"><b>Your previous report is complete.</b> Each '
+                 'one-time payment covers one report — purchase another below to run '
+                 'a new one, or subscribe to keep your timeline updated.</div>'
+                 if used else "")
     err_html = f'<div class="card err"><b>{_escape(error)}</b></div>' if error else ""
 
     pay_block = ""
@@ -235,7 +240,7 @@ def _paywall(canceled: bool = False, error: str | None = None) -> str:
       time, with each lab's own reference range. {gate.price_display()} one-time.</p>
     <p><a href="/sample.pdf">See a finished sample report →</a></p>
     <hr class="rule"/>
-    {cancel_html}{err_html}
+    {used_html}{cancel_html}{err_html}
     {pay_block}
     {code_block}
     {signin}
@@ -342,11 +347,35 @@ def _base_url() -> str:
     return root
 
 
+def _access_payload() -> dict | None:
+    """Return the access-cookie payload if it CURRENTLY grants access, else None.
+
+    A one-time Stripe payment that has already produced its report no longer
+    grants access (so the visitor is sent back to the paywall to buy another,
+    instead of being stuck on the upload form).
+    """
+    if not gate.gating_enabled():
+        return {"k": "open"}
+    payload = gate.read_token(request.cookies.get(gate.COOKIE_NAME))
+    if not payload:
+        return None
+    if (payload.get("k") == "stripe" and payload.get("plan") != "sub"
+            and store.is_consumed(payload.get("ref", ""))):
+        return None
+    return payload
+
+
+def _spent_oncetime_cookie() -> bool:
+    """True if the current cookie is a one-time payment that's already been used."""
+    payload = gate.read_token(request.cookies.get(gate.COOKIE_NAME))
+    return bool(payload and payload.get("k") == "stripe"
+               and payload.get("plan") != "sub"
+               and store.is_consumed(payload.get("ref", "")))
+
+
 def _has_access() -> bool:
     """True if the visitor may use /app and /generate."""
-    if not gate.gating_enabled():
-        return True
-    return gate.token_is_valid(request.cookies.get(gate.COOKIE_NAME))
+    return _access_payload() is not None
 
 
 def _grant_cookie(resp: Response, kind: str, ref: str, plan: str | None = None) -> Response:
@@ -428,11 +457,13 @@ def upload_page() -> Response:
         resp = make_response(_upload_form())
         return _grant_cookie(resp, "stripe", f"acct:{acct.get('cust')}", "sub")
 
-    # Otherwise show the paywall.
-    return Response(
-        _paywall(canceled=bool(request.args.get("canceled"))),
-        mimetype="text/html",
-    )
+    # Otherwise show the paywall. If the visitor's last one-time payment was
+    # already used, say so (and clear the spent cookie so it's a clean slate).
+    used = _spent_oncetime_cookie()
+    resp = make_response(_paywall(canceled=bool(request.args.get("canceled")), used=used))
+    if used:
+        resp.delete_cookie(gate.COOKIE_NAME)
+    return resp
 
 
 @app.post("/checkout")
@@ -545,7 +576,9 @@ def generate() -> Response:
     if payload and payload.get("k") == "stripe" and payload.get("plan") != "sub":
         paid_session_id = payload.get("ref")
         if paid_session_id and store.is_consumed(paid_session_id):
-            return Response(_already_used_page(), mimetype="text/html", status=403)
+            # Already used — send back to the paywall (which shows the "previous
+            # report complete, buy another" note) instead of a dead end.
+            return redirect("/app", code=303)
 
     uploads = [f for f in request.files.getlist("labs")
                if f and f.filename and f.filename.lower().endswith(".pdf")]
