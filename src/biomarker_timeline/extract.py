@@ -402,3 +402,38 @@ def extract_all(docs: list[SourceDocument]) -> tuple[list[MarkerSeries], list[Re
     warnings.extend(dup_notes)
     series = build_series(all_readings)
     return series, all_readings, warnings
+
+
+def coverage_report(docs: list[SourceDocument], readings: list[Reading]) -> str:
+    """Operator-facing audit: per file, how many markers were captured and which
+    result-looking lines (a value + a known unit) were NOT captured — so nothing
+    is silently dropped and gaps are visible."""
+    by_file: dict[str, list[Reading]] = {}
+    for r in readings:
+        by_file.setdefault(r.source_file, []).append(r)
+
+    out = ["EXTRACTION COVERAGE", "=" * 48]
+    total_missed = 0
+    for doc in docs:
+        caps = by_file.get(doc.name, [])
+        cap_src = {re.sub(r"\s+", "", c.source_text) for c in caps}
+        missed: list[str] = []
+        for ln in doc.lines:
+            s = ln.strip()
+            if not s or _REF_LABEL.match(s) or _REF_PROSE.search(s):
+                continue
+            if not (_VALUE_TOKEN.search(ln) and _UNIT_RE.search(ln)):
+                continue
+            if re.sub(r"\s+", "", s) in cap_src:
+                continue
+            missed.append(s)
+        total_missed += len(missed)
+        out.append(f"\n{doc.name}: captured {len(caps)} marker(s)")
+        if missed:
+            out.append(f"  {len(missed)} result-looking line(s) not captured:")
+            for m in missed[:40]:
+                out.append(f"    · {m[:110]}")
+    out.append("")
+    out.append(f"TOTAL: {len(readings)} markers captured across {len(docs)} file(s); "
+               f"{total_missed} result-looking line(s) not captured.")
+    return "\n".join(out)

@@ -1,0 +1,12 @@
+EXTRACTION COVERAGE
+================================================
+
+draw1_LabCorp_2025-08-25.pdf: captured 16 marker(s)
+
+draw2_Quest_2025-11-17.pdf: captured 16 marker(s)
+
+draw3_LabCorp_2026-02-09.pdf: captured 16 marker(s)
+
+draw4_Quest_2026-05-18.pdf: captured 16 marker(s)
+
+TOTAL: 64 markers captured across 4 file(s); 0 result-looking line(s) not captured.

@@ -11,7 +11,11 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from .extract import extract_all
+from datetime import date
+
+from . import ai_extract
+from .extract import (build_series, coverage_report, dedupe_readings, extract_all,
+                      find_draw_date)
 from .intake import SourceDocument, intake
 from .report import ReportContext, build_html, render_pdf, visible_text
 from .selfcheck import run_self_check
@@ -79,10 +83,31 @@ def run_pipeline(
     # ---- STAGE 2: EXTRACT ----
     log("\n[2/4] EXTRACT — pulling biomarkers and building time series…")
     series, readings, warnings = extract_all(docs)
+
+    # Optional AI fallback (Claude): reads layouts the regex misses, transcription
+    # only. The self-check below still re-verifies every value against the source.
+    if ai_extract.enabled():
+        log(f"      · AI fallback enabled (model: {ai_extract.MODEL})")
+        ai_readings = []
+        for doc in docs:
+            dd, _ = find_draw_date(doc)
+            ai_readings.extend(ai_extract.extract_document(doc, dd or date.min))
+        if ai_readings:
+            readings, notes = dedupe_readings(readings + ai_readings)
+            series = build_series(readings)
+            warnings.extend(notes)
+            log(f"      · with AI -> {len(readings)} readings across {len(series)} markers")
+
     log(f"      · {len(readings)} readings across {len(series)} markers, "
         f"{len({r.draw_date for r in readings})} draw date(s)")
     for w in warnings:
         log(f"      ! {w}")
+
+    # Coverage audit (operator-facing): what was captured vs missed per file.
+    coverage = coverage_report(docs, readings)
+    (output_dir / "coverage.txt").write_text(coverage, encoding="utf-8")
+    if verbose:
+        log("\n" + coverage)
 
     name = client_name or detect_client_name(docs) or "Client"
     ctx = ReportContext(

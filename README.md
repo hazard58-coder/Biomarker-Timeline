@@ -268,6 +268,19 @@ In Railway, add these under the service's **Variables** tab.
 |----------|--------------|
 | `CONFIDENCE_REVIEW_THRESHOLD` | Extraction-accuracy gate (default `0.80`). Values read below this confidence are routed to human review. This is the accuracy knob — it does **not** relax the legal no-interpretation guardrail. |
 | `COACHING_HANDOFF` | Text for the closing-page "separate option" coaching handoff. Leave unset for the default wording, or set to `off` to hide it. The handoff describes a separate service only — the report itself never interprets. |
+| `ANTHROPIC_API_KEY` | Enables the **AI extraction fallback** (Claude). When set, layouts the regex parser misses are read by Claude — transcription only. Leave unset for regex-only. |
+| `AI_EXTRACT_MODEL` | *(optional)* Claude model for the fallback (default `claude-sonnet-4-6`). |
+| `AI_EXTRACT` | *(optional)* Set to `0` to disable the AI fallback even when a key is present. |
+
+### AI extraction fallback & coverage
+
+With `ANTHROPIC_API_KEY` set, regex runs first (fast, free, deterministic) and
+Claude fills the gaps — reading any lab layout and the long tail of markers,
+strictly as **transcription**. The mandatory self-check still re-verifies every
+value against the source text and scans for banned words, so the AI can't invent
+a number or smuggle in interpretation. Every run also writes
+`output/coverage.txt`: per file, how many markers were captured and which
+result-looking lines were **not** — so nothing is silently dropped.
 
 ### Run the web service locally
 

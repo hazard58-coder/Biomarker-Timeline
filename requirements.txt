@@ -14,3 +14,7 @@ fonttools>=4.40
 flask>=3.0
 gunicorn>=21.2
 stripe>=7.0
+
+# Optional: AI extraction fallback (reads lab layouts the regex parser misses).
+# Only used when ANTHROPIC_API_KEY is set.
+anthropic>=0.40
