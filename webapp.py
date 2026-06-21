@@ -611,10 +611,11 @@ def login() -> Response:
             if gate.is_admin(email):
                 return Response(_info_page(
                     "Email send failed",
-                    f"SMTP error sending to {email}: {exc}  —  Check the SMTP_* "
-                    f"variables, that SMTP_USERNAME/SMTP_PASSWORD are right (for "
-                    f"Resend: username 'resend', password = your API key), and that "
-                    f"your MAIL_FROM domain is verified in your email provider."),
+                    f"Error sending to {email}: {exc}  —  A 'timed out' error means "
+                    f"the host is blocking outbound SMTP. Fix: set RESEND_API_KEY "
+                    f"(your re_... key) and MAIL_FROM, and the app will send via "
+                    f"Resend's HTTPS API instead of SMTP. For plain SMTP, check the "
+                    f"SMTP_* variables and that MAIL_FROM's domain is verified."),
                     mimetype="text/html", status=500)
         return Response(_info_page(
             "Check your email",
