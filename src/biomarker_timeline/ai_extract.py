@@ -28,6 +28,9 @@ _log = logging.getLogger("biomarker.ai")
 API_KEY = os.environ.get("ANTHROPIC_API_KEY", "").strip()
 MODEL = os.environ.get("AI_EXTRACT_MODEL", "claude-sonnet-4-6").strip()
 _OFF = os.environ.get("AI_EXTRACT", "1").strip().lower() in ("0", "false", "no", "off")
+# When on, the AI fallback only fills markers already in the curated dictionary
+# (no "Other" markers like sodium/BUN) — keeps the report to the known panel.
+KNOWN_ONLY = os.environ.get("AI_KNOWN_ONLY", "").strip().lower() in ("1", "true", "yes", "on")
 _MAX_CHARS = 60000
 
 _SYSTEM = (
@@ -90,6 +93,8 @@ def _to_reading(obj: dict, draw_date: date, source_file: str) -> Reading | None:
     canonical, score = canonical_for(name)
     if canonical and score >= 0.6:
         disp = marker_display_name(canonical)
+    elif KNOWN_ONLY:
+        return None  # curated-panel-only mode: skip markers not in the dictionary
     else:
         canonical = "ai_" + _slug(name)
         disp = name if not name.isupper() else name.title()

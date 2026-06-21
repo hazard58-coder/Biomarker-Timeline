@@ -271,6 +271,7 @@ In Railway, add these under the service's **Variables** tab.
 | `ANTHROPIC_API_KEY` | Enables the **AI extraction fallback** (Claude). When set, layouts the regex parser misses are read by Claude — transcription only. Leave unset for regex-only. |
 | `AI_EXTRACT_MODEL` | *(optional)* Claude model for the fallback (default `claude-sonnet-4-6`). |
 | `AI_EXTRACT` | *(optional)* Set to `0` to disable the AI fallback even when a key is present. |
+| `AI_KNOWN_ONLY` | *(optional)* Set to `1` so the AI fallback only fills markers in the curated dictionary (no "Other" markers like sodium/BUN) — keeps the report to your panel. Default includes everything found. |
 
 ### AI extraction fallback & coverage
 
