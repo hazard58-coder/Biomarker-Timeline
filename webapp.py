@@ -604,13 +604,31 @@ def login() -> Response:
     if mailer.mail_configured():
         try:
             mailer.send_magic_link(email, link)
-        except Exception:
+        except Exception as exc:
             app.logger.exception("failed to send sign-in link to %s", email)
+            # Surface the real SMTP error to an admin (who can't sign in to /diag
+            # while email is broken); stay generic for everyone else.
+            if gate.is_admin(email):
+                return Response(_info_page(
+                    "Email send failed",
+                    f"SMTP error sending to {email}: {exc}  —  Check the SMTP_* "
+                    f"variables, that SMTP_USERNAME/SMTP_PASSWORD are right (for "
+                    f"Resend: username 'resend', password = your API key), and that "
+                    f"your MAIL_FROM domain is verified in your email provider."),
+                    mimetype="text/html", status=500)
         return Response(_info_page(
             "Check your email",
             "If that address is valid, a sign-in link is on its way. It works for "
             "30 minutes."), mimetype="text/html")
 
+    # Not configured.
+    if gate.is_admin(email):
+        miss = ", ".join(mailer.missing_config()) or "(none — but mail still off)"
+        return Response(_info_page(
+            "Email isn't set up yet",
+            f"Missing SMTP settings: {miss}. Set SMTP_HOST, SMTP_PORT, "
+            f"SMTP_USERNAME, SMTP_PASSWORD, and MAIL_FROM in Railway."),
+            mimetype="text/html")
     return Response(_info_page(
         "Email isn't set up yet",
         "Sign-in links are sent by email, which isn't configured yet. Email "
@@ -640,19 +658,35 @@ def diag() -> Response:
     if not _is_admin():
         return redirect("/login", code=303)
     from biomarker_timeline import ai_extract
-    d = ai_extract.diagnostics()
-    rows = "".join(
-        f"<tr><td class='muted' style='padding:4px 12px 4px 0'>{_escape(k)}</td>"
-        f"<td><code>{_escape(str(v))}</code></td></tr>"
-        for k, v in d.items())
+
+    def _tbl(d: dict) -> str:
+        return "<div class='card'><table>" + "".join(
+            f"<tr><td class='muted' style='padding:4px 12px 4px 0'>{_escape(k)}</td>"
+            f"<td><code>{_escape(str(v))}</code></td></tr>"
+            for k, v in d.items()) + "</table></div>"
+
+    email = _account_email()
+    mail = mailer.diagnostics()
+    test_email_html = ""
+    if request.args.get("test_email") and email:
+        result = mailer.send_test(email)
+        test_email_html = (f'<div class="card"><b>Test email to {_escape(email)}:</b> '
+                           f'<code>{_escape(result)}</code></div>')
+
     return Response(_page("Diagnostics", f"""
     <div class="spacer"></div>
     <div class="kicker">Admin</div>
-    <h1 class="title">AI extraction diagnostics</h1>
+    <h1 class="title">Diagnostics</h1>
+
+    <h2 style="color:var(--copper);font-size:14px;letter-spacing:.1em;margin-top:18px;">EMAIL (SMTP)</h2>
+    <p>If sign-in links aren't arriving, check this. {('<a class="btn" href="/diag?test_email=1">Send a test email to ' + _escape(email) + '</a>') if email else ''}</p>
+    {test_email_html}
+    {_tbl(mail)}
+
+    <h2 style="color:var(--copper);font-size:14px;letter-spacing:.1em;margin-top:22px;">AI EXTRACTION</h2>
     <p>If <code>test_call</code> isn't <code>OK</code>, that's why the AI fallback
-      isn't adding markers. Common causes: wrong <code>model</code>, an invalid or
-      restricted API key, or blocked outbound network.</p>
-    <div class="card"><table>{rows}</table></div>
+      isn't adding markers (wrong model, bad/restricted key, or blocked network).</p>
+    {_tbl(ai_extract.diagnostics())}
     <p class="hintrow"><a href="/app">← Back</a></p>
     """), mimetype="text/html")
 

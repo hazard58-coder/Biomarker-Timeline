@@ -31,6 +31,38 @@ def mail_configured() -> bool:
     return bool(SMTP_HOST and MAIL_FROM)
 
 
+def missing_config() -> list[str]:
+    miss = []
+    if not SMTP_HOST:
+        miss.append("SMTP_HOST")
+    if not MAIL_FROM:
+        miss.append("MAIL_FROM")
+    return miss
+
+
+def diagnostics() -> dict:
+    return {
+        "configured": mail_configured(),
+        "smtp_host": SMTP_HOST or "(unset)",
+        "smtp_port": SMTP_PORT,
+        "smtp_username_set": bool(SMTP_USERNAME),
+        "smtp_password_set": bool(SMTP_PASSWORD),
+        "mail_from": MAIL_FROM or "(unset)",
+        "starttls": SMTP_STARTTLS,
+        "missing": missing_config(),
+    }
+
+
+def send_test(to: str) -> str:
+    """Send a test email; return 'OK' or the exact error string."""
+    try:
+        send_email(to, "Biomarker Timeline — SMTP test",
+                   "This is a test email. If you received it, SMTP is working.")
+        return "OK"
+    except Exception as exc:
+        return f"ERROR — {type(exc).__name__}: {exc}"
+
+
 def send_email(to: str, subject: str, body: str) -> None:
     """Send a plain-text email. Raises on failure."""
     msg = EmailMessage()
