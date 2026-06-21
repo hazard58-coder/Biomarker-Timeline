@@ -185,9 +185,12 @@ _VISION_SYSTEM = (
     "say whether it is high, low, normal, abnormal, optimal, good, or bad, never "
     "diagnose, and never recommend anything.\n\n"
     "Return ONLY a JSON object (no prose, no code fence) with two keys:\n"
-    "  collected_date  the specimen COLLECTION date printed on the page, as "
-    "\"YYYY-MM-DD\" (use the collected/drawn date, not the reported/printed date); "
-    "null if none is printed.\n"
+    "  collected_date  the specimen COLLECTION date for these results, as "
+    "\"YYYY-MM-DD\". Look in the page header / patient info area for labels like "
+    "Collected, Collection Date, Drawn, Date Drawn, Date of Service, Specimen "
+    "Date, or Observation Date; prefer the collected/drawn date over the "
+    "reported/printed date. If a date appears anywhere on the page, return it. "
+    "Only use null if truly no date is visible.\n"
     "  results  an array of the biomarker results on the page; each item has: "
     "name (as printed), value (number, or null if not a plain number), value_text "
     "(literal result if not a plain number e.g. \"<0.1\", \"Negative\"; else null), "
@@ -217,10 +220,11 @@ def _render_page_png(path, page_index: int, dpi: int = 150) -> bytes:
         return pix.tobytes("png")
 
 
-def extract_document_vision(doc: SourceDocument) -> list[Reading]:
+def extract_document_vision(doc: SourceDocument, fallback_date: date = date.min) -> list[Reading]:
     """Read scanned/image pages (no text layer) with Claude vision — markers AND
     the per-page collection date, so a multi-date cumulative scan yields multiple
-    draws. Returns [] if disabled or on failure."""
+    draws. `fallback_date` is used for pages where no date is printed. Returns []
+    if disabled or on failure."""
     if not enabled() or not VISION:
         return []
     img_pages = [i for i, t in enumerate(doc.pages)
@@ -238,7 +242,7 @@ def extract_document_vision(doc: SourceDocument) -> list[Reading]:
 
     pages = img_pages[:VISION_MAX_PAGES]
 
-    def _read_page(i: int) -> list[Reading]:
+    def _read_page(i: int) -> tuple:
         try:
             png = _render_page_png(doc.path, i, dpi=VISION_DPI)
             b64 = base64.standard_b64encode(png).decode("ascii")
@@ -253,7 +257,7 @@ def extract_document_vision(doc: SourceDocument) -> list[Reading]:
             raw = "".join(b.text for b in msg.content if getattr(b, "type", None) == "text")
         except Exception as exc:
             _log.warning("vision extract failed for %s page %d: %s", doc.name, i + 1, exc)
-            return []
+            return date.min, []
         obj = _parse_json_object(raw)
         dd = _parse_date_token(str(obj.get("collected_date") or "")) or date.min
         res: list[Reading] = []
@@ -263,17 +267,27 @@ def extract_document_vision(doc: SourceDocument) -> list[Reading]:
                 if r:
                     r.review_flags.append("ai-vision")
                     res.append(r)
-        return res
+        return dd, res
 
     # Vision pages are I/O-bound Claude calls — run them concurrently so a
     # many-page scan finishes in seconds, not minutes (avoids worker timeouts).
-    out: list[Reading] = []
+    page_results: list[tuple] = []
     try:
         with ThreadPoolExecutor(max_workers=min(VISION_CONCURRENCY, len(pages))) as ex:
-            for res in ex.map(_read_page, pages):
-                out.extend(res)
+            page_results = list(ex.map(_read_page, pages))
     except Exception as exc:
         _log.warning("vision pool failed for %s: %s", doc.name, exc)
+
+    # A multi-page scan usually prints the collection date once (page 1 header).
+    # Apply the document's date to readings from pages that had none.
+    doc_date = next((d for d, _ in page_results if d != date.min),
+                    fallback_date if fallback_date != date.min else date.min)
+    out: list[Reading] = []
+    for _pd, res in page_results:
+        for r in res:
+            if r.draw_date == date.min and doc_date != date.min:
+                r.draw_date = doc_date
+            out.append(r)
     return out
 
 

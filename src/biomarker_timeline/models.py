@@ -8,6 +8,7 @@ which is transcription, not advice.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Optional
@@ -168,7 +169,10 @@ class MarkerSeries:
 
     @property
     def has_unit_mismatch(self) -> bool:
-        return len([u for u in self.units if u]) > 1
+        # Compare NORMALIZED units so equivalent spellings (e.g. "Million/uL" vs
+        # "x10(6)/uL") aren't treated as a real mismatch.
+        norm = {normalize_unit(u) for u in self.units if u}
+        return len(norm) > 1
 
     @property
     def latest(self) -> Reading:
@@ -181,6 +185,30 @@ class MarkerSeries:
     @property
     def n_flagged(self) -> int:
         return sum(1 for r in self.readings if r.flagged)
+
+
+# Equivalent unit spellings collapse to one canonical form so the same marker
+# reported as e.g. "Million/uL" and "x10(6)/uL" doesn't look like a mismatch.
+_UNIT_EQUIV = {
+    "million/ul": "x10E6/uL", "x10e6/ul": "x10E6/uL", "x10(6)/ul": "x10E6/uL",
+    "x10^6/ul": "x10E6/uL", "10*6/ul": "x10E6/uL", "10e6/ul": "x10E6/uL",
+    "10^6/ul": "x10E6/uL", "m/ul": "x10E6/uL",
+    "thousand/ul": "x10E3/uL", "x10e3/ul": "x10E3/uL", "x10(3)/ul": "x10E3/uL",
+    "x10^3/ul": "x10E3/uL", "10*3/ul": "x10E3/uL", "10e3/ul": "x10E3/uL",
+    "10^3/ul": "x10E3/uL", "k/ul": "x10E3/uL",
+    "mg/dl": "mg/dL", "ng/dl": "ng/dL", "ng/ml": "ng/mL", "pg/ml": "pg/mL",
+    "g/dl": "g/dL", "miu/ml": "mIU/mL", "uiu/ml": "uIU/mL", "miu/l": "mIU/L",
+    "nmol/l": "nmol/L", "mmol/l": "mmol/L", "umol/l": "umol/L", "u/l": "U/L",
+    "iu/l": "IU/L", "mg/l": "mg/L", "mcg/dl": "mcg/dL", "ug/dl": "mcg/dL",
+}
+
+
+def normalize_unit(u: str) -> str:
+    """Collapse equivalent unit spellings to one canonical form (for comparison)."""
+    if not u:
+        return ""
+    key = re.sub(r"\s+", "", u).lower()
+    return _UNIT_EQUIV.get(key, u)
 
 
 def _fmt(x: float) -> str:
