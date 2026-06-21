@@ -22,6 +22,7 @@ import json
 import os
 import smtplib
 import ssl
+import urllib.error
 import urllib.request
 from email.message import EmailMessage
 
@@ -93,9 +94,19 @@ def _send_via_resend(to: str, subject: str, body: str) -> None:
         "https://api.resend.com/emails", data=payload, method="POST",
         headers={"Authorization": f"Bearer {RESEND_API_KEY}",
                  "Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=20) as resp:
-        if resp.status >= 300:
-            raise RuntimeError(f"Resend API returned {resp.status}: {resp.read()[:300]!r}")
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            if resp.status >= 300:
+                raise RuntimeError(f"Resend API {resp.status}: {resp.read().decode('utf-8', 'replace')[:400]}")
+    except urllib.error.HTTPError as exc:
+        # Surface Resend's actual error body (e.g. domain/key/from problem),
+        # not just "403 Forbidden".
+        detail = ""
+        try:
+            detail = exc.read().decode("utf-8", "replace")[:400]
+        except Exception:
+            pass
+        raise RuntimeError(f"Resend API {exc.code}: {detail or exc.reason}") from None
 
 
 def _send_via_smtp(to: str, subject: str, body: str) -> None:
