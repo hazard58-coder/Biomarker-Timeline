@@ -34,6 +34,9 @@ KNOWN_ONLY = os.environ.get("AI_KNOWN_ONLY", "").strip().lower() in ("1", "true"
 # Vision: read scanned/image pages (no text layer). Default on when AI is enabled.
 VISION = os.environ.get("AI_VISION", "1").strip().lower() not in ("0", "false", "no", "off")
 VISION_MAX_PAGES = int(os.environ.get("AI_VISION_MAX_PAGES", "40"))
+VISION_CONCURRENCY = max(1, int(os.environ.get("AI_VISION_CONCURRENCY", "5")))
+VISION_DPI = int(os.environ.get("AI_VISION_DPI", "150"))
+AI_TIMEOUT = float(os.environ.get("AI_TIMEOUT", "60"))  # per-call seconds
 _MAX_CHARS = 60000
 _PAGE_TEXT_MIN = 40  # a page with fewer characters than this is treated as scanned
 
@@ -93,7 +96,7 @@ def diagnostics() -> dict:
         d["test_call"] = "no API key set"
         return d
     try:
-        client = anthropic.Anthropic(api_key=API_KEY)
+        client = anthropic.Anthropic(api_key=API_KEY, timeout=AI_TIMEOUT)
         msg = client.messages.create(
             model=MODEL, max_tokens=16,
             messages=[{"role": "user", "content": "Reply with exactly: ok"}])
@@ -227,17 +230,19 @@ def extract_document_vision(doc: SourceDocument) -> list[Reading]:
     try:
         import base64
         import anthropic
+        from concurrent.futures import ThreadPoolExecutor
         from .extract import _parse_date_token
     except Exception as exc:
         _log.warning("vision unavailable: %s", exc)
         return []
 
-    client = anthropic.Anthropic(api_key=API_KEY)
-    out: list[Reading] = []
-    for i in img_pages[:VISION_MAX_PAGES]:
+    pages = img_pages[:VISION_MAX_PAGES]
+
+    def _read_page(i: int) -> list[Reading]:
         try:
-            png = _render_page_png(doc.path, i)
+            png = _render_page_png(doc.path, i, dpi=VISION_DPI)
             b64 = base64.standard_b64encode(png).decode("ascii")
+            client = anthropic.Anthropic(api_key=API_KEY, timeout=AI_TIMEOUT)
             msg = client.messages.create(
                 model=MODEL, max_tokens=4096, system=_VISION_SYSTEM,
                 messages=[{"role": "user", "content": [
@@ -248,16 +253,27 @@ def extract_document_vision(doc: SourceDocument) -> list[Reading]:
             raw = "".join(b.text for b in msg.content if getattr(b, "type", None) == "text")
         except Exception as exc:
             _log.warning("vision extract failed for %s page %d: %s", doc.name, i + 1, exc)
-            continue
+            return []
         obj = _parse_json_object(raw)
         dd = _parse_date_token(str(obj.get("collected_date") or "")) or date.min
+        res: list[Reading] = []
         for item in obj.get("results", []):
-            if not isinstance(item, dict):
-                continue
-            r = _to_reading(item, dd, doc.name)
-            if r:
-                r.review_flags.append("ai-vision")
-                out.append(r)
+            if isinstance(item, dict):
+                r = _to_reading(item, dd, doc.name)
+                if r:
+                    r.review_flags.append("ai-vision")
+                    res.append(r)
+        return res
+
+    # Vision pages are I/O-bound Claude calls — run them concurrently so a
+    # many-page scan finishes in seconds, not minutes (avoids worker timeouts).
+    out: list[Reading] = []
+    try:
+        with ThreadPoolExecutor(max_workers=min(VISION_CONCURRENCY, len(pages))) as ex:
+            for res in ex.map(_read_page, pages):
+                out.extend(res)
+    except Exception as exc:
+        _log.warning("vision pool failed for %s: %s", doc.name, exc)
     return out
 
 
@@ -271,7 +287,7 @@ def extract_document(doc: SourceDocument, draw_date: date) -> list[Reading]:
         return []
     try:
         import anthropic
-        client = anthropic.Anthropic(api_key=API_KEY)
+        client = anthropic.Anthropic(api_key=API_KEY, timeout=AI_TIMEOUT)
         msg = client.messages.create(
             model=MODEL,
             max_tokens=4096,

@@ -30,6 +30,7 @@ COPY . .
 
 EXPOSE 8080
 
-# 2 workers handles a personal-scale tool; raise/lower for your plan's memory.
-# The long timeout gives WeasyPrint + matplotlib room to render large panels.
-CMD ["sh", "-c", "gunicorn webapp:app --bind 0.0.0.0:${PORT:-8080} --workers 2 --timeout 180 --access-logfile -"]
+# One worker with threads keeps memory low (WeasyPrint + matplotlib + PyMuPDF are
+# heavy) while still handling concurrent requests. The long timeout gives the AI
+# vision pass (many Claude calls per scanned report) room to finish.
+CMD ["sh", "-c", "gunicorn webapp:app --bind 0.0.0.0:${PORT:-8080} --workers 1 --threads 4 --timeout 300 --access-logfile -"]
