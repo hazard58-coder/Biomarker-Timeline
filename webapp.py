@@ -37,7 +37,9 @@ from werkzeug.utils import secure_filename  # noqa: E402
 import gate  # noqa: E402
 import mailer  # noqa: E402
 import store  # noqa: E402
-from biomarker_timeline.pipeline import run_pipeline  # noqa: E402
+from biomarker_timeline.pipeline import gather, run_pipeline  # noqa: E402
+from biomarker_timeline.intake import intake  # noqa: E402
+from biomarker_timeline import coach_review  # noqa: E402
 
 ACCOUNT_COOKIE = "bt_account"
 
@@ -787,6 +789,97 @@ def portal() -> Response:
             "Please try again, or email contact@vitalisforge.com."),
             mimetype="text/html", status=502)
     return redirect(url, code=303)
+
+
+def _coach_upload_form(error: str | None = None) -> str:
+    err_html = f'<div class="card err"><b>{_escape(error)}</b></div>' if error else ""
+    ai_ok = coach_review.enabled()
+    ai_note = ("" if ai_ok else
+               '<div class="card err"><b>ANTHROPIC_API_KEY is not set — Coach Randy '
+               'cannot run without it.</b></div>')
+    return _page("Coach Randy — Functional Review (admin)", f"""
+    <div class="spacer"></div>
+    <div class="kicker">Admin · Coach Randy</div>
+    <h1 class="title">Functional Review.</h1>
+    <p>This is a <b>separate, interpretive</b> product from the Biomarker Timeline
+      data report. Coach Randy reads the same extracted numbers and adds a
+      functional ("optimal") range and plain-language educational notes next to
+      each lab's own standard range. It is <b>not</b> run through the no-advice
+      self-check, and it is wrapped in heavy "educational, not medical advice"
+      disclaimers. Admin-only until a clinician / counsel signs off on the output.</p>
+    <hr class="rule"/>
+    {err_html}{ai_note}
+    <form id="coachform" class="card" action="/coach/generate" method="post"
+          enctype="multipart/form-data">
+      <label class="fld" for="cname">Name for the review (optional)</label>
+      <input type="text" id="cname" name="name" placeholder="e.g. Jane Doe"/>
+      <div class="spacer"></div>
+      <label class="fld" for="clabs">Lab PDFs</label>
+      <input type="file" id="clabs" name="labs" accept="application/pdf,.pdf" multiple required/>
+      <p class="hintrow">Same PDFs you'd use for the data report (up to 40&nbsp;MB total).</p>
+      <div class="spacer"></div>
+      <button class="btn" type="submit">Generate functional review</button>
+      <p class="hintrow">This calls Claude and can take a minute — keep this page open.</p>
+    </form>
+    <p class="hintrow"><a href="/app">← Data report</a> · <a href="/diag">Diagnostics</a></p>
+    {_GEN_OVERLAY.replace("genform", "coachform")}
+    """)
+
+
+@app.get("/coach")
+def coach_page() -> Response:
+    if not _is_admin():
+        return redirect("/login", code=303)
+    return Response(_coach_upload_form(), mimetype="text/html")
+
+
+@app.post("/coach/generate")
+def coach_generate() -> Response:
+    if not _is_admin():
+        return redirect("/login", code=303)
+
+    uploads = [f for f in request.files.getlist("labs")
+               if f and f.filename and f.filename.lower().endswith(".pdf")]
+    if not uploads:
+        return Response(_coach_upload_form("Please choose at least one PDF file."),
+                        mimetype="text/html", status=400)
+    if not coach_review.enabled():
+        return Response(_coach_upload_form(
+            "ANTHROPIC_API_KEY is not set — Coach Randy can't run."),
+            mimetype="text/html", status=400)
+
+    client_name = (request.form.get("name") or "").strip() or None
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        in_dir = tmp / "input"
+        in_dir.mkdir()
+        for i, f in enumerate(uploads):
+            fname = secure_filename(f.filename) or f"upload_{i}.pdf"
+            if not fname.lower().endswith(".pdf"):
+                fname += ".pdf"
+            f.save(str(in_dir / fname))
+
+        try:
+            docs = intake(in_dir)
+            if not docs:
+                raise RuntimeError("No readable PDF pages were found in that upload.")
+            series, _readings, _warnings = gather(docs)
+            name = client_name or "Client"
+            review = coach_review.generate_review(series, name)
+            out_pdf = tmp / "out" / "coach_review.pdf"
+            coach_review.render_pdf(review, out_pdf)
+            data = out_pdf.read_bytes()
+        except Exception as exc:
+            app.logger.exception("coach review failed")
+            return Response(_coach_upload_form(
+                f"Coach Randy couldn't finish ({exc})."),
+                mimetype="text/html", status=500)
+
+    base = _safe_slug(client_name) if client_name else "Client"
+    download_name = f"{base}_Functional_Review_{date.today().isoformat()}.pdf"
+    return send_file(io.BytesIO(data), mimetype="application/pdf",
+                     as_attachment=True, download_name=download_name)
 
 
 def _run_report(on_success) -> Response:

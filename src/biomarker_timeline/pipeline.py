@@ -54,6 +54,48 @@ class PipelineResult:
     n_draws: int
 
 
+def gather(docs: list[SourceDocument], log=lambda _msg: None):
+    """Run the EXTRACT stage on already-intaken docs: regex pass, optional AI
+    fallback (text + vision), dedupe, and the single-draw date attribution.
+
+    Returns ``(series, readings, warnings)``. This is pure transcription — no
+    interpretation — so it can be shared by the data report pipeline AND the
+    separate Coach Randy review, which both work on the same numbers.
+    """
+    series, readings, warnings = extract_all(docs)
+
+    # Optional AI fallback (Claude): reads layouts the regex misses, transcription
+    # only. The data-report self-check still re-verifies every value vs the source.
+    if ai_extract.enabled():
+        log(f"      · AI fallback enabled (model: {ai_extract.MODEL})")
+        ai_readings = []
+        for doc in docs:
+            dd, _ = find_draw_date(doc)
+            ai_readings.extend(ai_extract.extract_document(doc, dd or date.min))
+            # Scanned/image pages (no text) read via Claude vision — per-page date,
+            # falling back to the document's own date for pages without one.
+            ai_readings.extend(ai_extract.extract_document_vision(doc, dd or date.min))
+        if ai_readings:
+            readings, notes = dedupe_readings(readings + ai_readings)
+            series = build_series(readings)
+            warnings.extend(notes)
+            log(f"      · with AI -> {len(readings)} readings across {len(series)} markers")
+
+    # If some readings still have no date but the whole upload has exactly ONE
+    # distinct draw date, attribute the undated ones to it (single-draw upload
+    # across multiple files). Flagged, never invented from nothing.
+    known_dates = {r.draw_date for r in readings if r.draw_date != date.min}
+    if len(known_dates) == 1:
+        only = next(iter(known_dates))
+        for r in readings:
+            if r.draw_date == date.min:
+                r.draw_date = only
+                r.review_flags.append("draw date taken from the other file(s) in this upload")
+        series = build_series(readings)
+
+    return series, readings, warnings
+
+
 def run_pipeline(
     input_dir: Path,
     output_path: Path,
@@ -82,36 +124,7 @@ def run_pipeline(
 
     # ---- STAGE 2: EXTRACT ----
     log("\n[2/4] EXTRACT — pulling biomarkers and building time series…")
-    series, readings, warnings = extract_all(docs)
-
-    # Optional AI fallback (Claude): reads layouts the regex misses, transcription
-    # only. The self-check below still re-verifies every value against the source.
-    if ai_extract.enabled():
-        log(f"      · AI fallback enabled (model: {ai_extract.MODEL})")
-        ai_readings = []
-        for doc in docs:
-            dd, _ = find_draw_date(doc)
-            ai_readings.extend(ai_extract.extract_document(doc, dd or date.min))
-            # Scanned/image pages (no text) read via Claude vision — per-page date,
-            # falling back to the document's own date for pages without one.
-            ai_readings.extend(ai_extract.extract_document_vision(doc, dd or date.min))
-        if ai_readings:
-            readings, notes = dedupe_readings(readings + ai_readings)
-            series = build_series(readings)
-            warnings.extend(notes)
-            log(f"      · with AI -> {len(readings)} readings across {len(series)} markers")
-
-    # If some readings still have no date but the whole upload has exactly ONE
-    # distinct draw date, attribute the undated ones to it (single-draw upload
-    # across multiple files). Flagged, never invented from nothing.
-    known_dates = {r.draw_date for r in readings if r.draw_date != date.min}
-    if len(known_dates) == 1:
-        only = next(iter(known_dates))
-        for r in readings:
-            if r.draw_date == date.min:
-                r.draw_date = only
-                r.review_flags.append("draw date taken from the other file(s) in this upload")
-        series = build_series(readings)
+    series, readings, warnings = gather(docs, log)
 
     log(f"      · {len(readings)} readings across {len(series)} markers, "
         f"{len({r.draw_date for r in readings})} draw date(s)")
