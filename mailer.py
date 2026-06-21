@@ -93,7 +93,11 @@ def _send_via_resend(to: str, subject: str, body: str) -> None:
     req = urllib.request.Request(
         "https://api.resend.com/emails", data=payload, method="POST",
         headers={"Authorization": f"Bearer {RESEND_API_KEY}",
-                 "Content-Type": "application/json"})
+                 "Content-Type": "application/json",
+                 "Accept": "application/json",
+                 # api.resend.com is behind Cloudflare, which bans the default
+                 # "Python-urllib/x" signature (CF error 1010). Send a real UA.
+                 "User-Agent": "BiomarkerTimeline/1.0 (+https://vitalisforge.com)"})
     try:
         with urllib.request.urlopen(req, timeout=20) as resp:
             if resp.status >= 300:
