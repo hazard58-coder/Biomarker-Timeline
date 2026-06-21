@@ -92,6 +92,8 @@ def run_pipeline(
         for doc in docs:
             dd, _ = find_draw_date(doc)
             ai_readings.extend(ai_extract.extract_document(doc, dd or date.min))
+            # Scanned/image pages (no text) read via Claude vision — per-page date.
+            ai_readings.extend(ai_extract.extract_document_vision(doc))
         if ai_readings:
             readings, notes = dedupe_readings(readings + ai_readings)
             series = build_series(readings)

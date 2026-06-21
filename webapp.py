@@ -633,6 +633,30 @@ def verify() -> Response:
     return resp
 
 
+@app.get("/diag")
+def diag() -> Response:
+    """Admin-only diagnostics — shows whether the AI fallback can actually reach
+    Claude (and why not, if it can't)."""
+    if not _is_admin():
+        return redirect("/login", code=303)
+    from biomarker_timeline import ai_extract
+    d = ai_extract.diagnostics()
+    rows = "".join(
+        f"<tr><td class='muted' style='padding:4px 12px 4px 0'>{_escape(k)}</td>"
+        f"<td><code>{_escape(str(v))}</code></td></tr>"
+        for k, v in d.items())
+    return Response(_page("Diagnostics", f"""
+    <div class="spacer"></div>
+    <div class="kicker">Admin</div>
+    <h1 class="title">AI extraction diagnostics</h1>
+    <p>If <code>test_call</code> isn't <code>OK</code>, that's why the AI fallback
+      isn't adding markers. Common causes: wrong <code>model</code>, an invalid or
+      restricted API key, or blocked outbound network.</p>
+    <div class="card"><table>{rows}</table></div>
+    <p class="hintrow"><a href="/app">← Back</a></p>
+    """), mimetype="text/html")
+
+
 @app.get("/logout")
 def logout() -> Response:
     resp = make_response(redirect("/", code=303))

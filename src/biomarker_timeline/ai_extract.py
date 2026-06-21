@@ -31,7 +31,11 @@ _OFF = os.environ.get("AI_EXTRACT", "1").strip().lower() in ("0", "false", "no",
 # When on, the AI fallback only fills markers already in the curated dictionary
 # (no "Other" markers like sodium/BUN) — keeps the report to the known panel.
 KNOWN_ONLY = os.environ.get("AI_KNOWN_ONLY", "").strip().lower() in ("1", "true", "yes", "on")
+# Vision: read scanned/image pages (no text layer). Default on when AI is enabled.
+VISION = os.environ.get("AI_VISION", "1").strip().lower() not in ("0", "false", "no", "off")
+VISION_MAX_PAGES = int(os.environ.get("AI_VISION_MAX_PAGES", "40"))
 _MAX_CHARS = 60000
+_PAGE_TEXT_MIN = 40  # a page with fewer characters than this is treated as scanned
 
 _SYSTEM = (
     "You transcribe laboratory result values from the text of a lab report. You "
@@ -57,6 +61,47 @@ _SYSTEM = (
 
 def enabled() -> bool:
     return bool(API_KEY) and not _OFF
+
+
+def diagnostics() -> dict:
+    """Live status of the AI fallback, for an admin to see WHY it isn't firing
+    (wrong model, bad key, egress blocked, package missing, ...)."""
+    d = {
+        "api_key_set": bool(API_KEY),
+        "ai_extract_off": _OFF,
+        "enabled": enabled(),
+        "model": MODEL,
+        "known_only": KNOWN_ONLY,
+        "vision": VISION,
+        "anthropic_installed": False,
+        "pymupdf_installed": False,
+        "test_call": "not run",
+    }
+    try:
+        import fitz  # noqa: F401
+        d["pymupdf_installed"] = True
+    except Exception:
+        d["pymupdf_installed"] = False
+    try:
+        import anthropic
+        d["anthropic_installed"] = True
+        d["anthropic_version"] = getattr(anthropic, "__version__", "?")
+    except Exception as exc:
+        d["test_call"] = f"anthropic import FAILED: {exc}"
+        return d
+    if not API_KEY:
+        d["test_call"] = "no API key set"
+        return d
+    try:
+        client = anthropic.Anthropic(api_key=API_KEY)
+        msg = client.messages.create(
+            model=MODEL, max_tokens=16,
+            messages=[{"role": "user", "content": "Reply with exactly: ok"}])
+        txt = "".join(b.text for b in msg.content if getattr(b, "type", None) == "text")
+        d["test_call"] = f"OK — model replied: {txt.strip()[:30]!r}"
+    except Exception as exc:
+        d["test_call"] = f"ERROR — {type(exc).__name__}: {exc}"
+    return d
 
 
 def _slug(name: str) -> str:
@@ -129,6 +174,91 @@ def _parse_json_array(raw: str) -> list:
         return data if isinstance(data, list) else []
     except Exception:
         return []
+
+
+_VISION_SYSTEM = (
+    "You transcribe laboratory result values from an IMAGE of a lab report page. "
+    "You ONLY copy what is literally printed. You never interpret a value, never "
+    "say whether it is high, low, normal, abnormal, optimal, good, or bad, never "
+    "diagnose, and never recommend anything.\n\n"
+    "Return ONLY a JSON object (no prose, no code fence) with two keys:\n"
+    "  collected_date  the specimen COLLECTION date printed on the page, as "
+    "\"YYYY-MM-DD\" (use the collected/drawn date, not the reported/printed date); "
+    "null if none is printed.\n"
+    "  results  an array of the biomarker results on the page; each item has: "
+    "name (as printed), value (number, or null if not a plain number), value_text "
+    "(literal result if not a plain number e.g. \"<0.1\", \"Negative\"; else null), "
+    "unit (as printed or null), ref_low (lower number of the printed reference "
+    "range or null), ref_high (upper number or null).\n\n"
+    "Include only real analyte results that have a value. Skip headers, patient "
+    "info, and notes. Never invent a value that is not printed."
+)
+
+
+def _parse_json_object(raw: str) -> dict:
+    raw = raw.strip()
+    m = re.search(r"\{.*\}", raw, re.S)
+    if m:
+        raw = m.group(0)
+    try:
+        data = json.loads(raw)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _render_page_png(path, page_index: int, dpi: int = 150) -> bytes:
+    import fitz  # PyMuPDF
+    with fitz.open(str(path)) as d:
+        pix = d[page_index].get_pixmap(dpi=dpi)
+        return pix.tobytes("png")
+
+
+def extract_document_vision(doc: SourceDocument) -> list[Reading]:
+    """Read scanned/image pages (no text layer) with Claude vision — markers AND
+    the per-page collection date, so a multi-date cumulative scan yields multiple
+    draws. Returns [] if disabled or on failure."""
+    if not enabled() or not VISION:
+        return []
+    img_pages = [i for i, t in enumerate(doc.pages)
+                 if len((t or "").strip()) < _PAGE_TEXT_MIN]
+    if not img_pages:
+        return []
+    try:
+        import base64
+        import anthropic
+        from .extract import _parse_date_token
+    except Exception as exc:
+        _log.warning("vision unavailable: %s", exc)
+        return []
+
+    client = anthropic.Anthropic(api_key=API_KEY)
+    out: list[Reading] = []
+    for i in img_pages[:VISION_MAX_PAGES]:
+        try:
+            png = _render_page_png(doc.path, i)
+            b64 = base64.standard_b64encode(png).decode("ascii")
+            msg = client.messages.create(
+                model=MODEL, max_tokens=4096, system=_VISION_SYSTEM,
+                messages=[{"role": "user", "content": [
+                    {"type": "image", "source": {"type": "base64",
+                                                 "media_type": "image/png", "data": b64}},
+                    {"type": "text", "text": "Transcribe this lab page as the specified JSON."},
+                ]}])
+            raw = "".join(b.text for b in msg.content if getattr(b, "type", None) == "text")
+        except Exception as exc:
+            _log.warning("vision extract failed for %s page %d: %s", doc.name, i + 1, exc)
+            continue
+        obj = _parse_json_object(raw)
+        dd = _parse_date_token(str(obj.get("collected_date") or "")) or date.min
+        for item in obj.get("results", []):
+            if not isinstance(item, dict):
+                continue
+            r = _to_reading(item, dd, doc.name)
+            if r:
+                r.review_flags.append("ai-vision")
+                out.append(r)
+    return out
 
 
 def extract_document(doc: SourceDocument, draw_date: date) -> list[Reading]:
