@@ -353,6 +353,43 @@ def build_series(all_readings: list[Reading]) -> list[MarkerSeries]:
     return series
 
 
+def _reading_rank(r: Reading) -> tuple:
+    """Quality ranking used to pick the best of several duplicate readings:
+    higher confidence, then a printed range, then a numeric value, then a longer
+    source line (more context)."""
+    return (round(r.confidence, 3), r.reference.has_range, r.value is not None,
+            len(r.source_text))
+
+
+def dedupe_readings(readings: list[Reading]) -> tuple[list[Reading], list[str]]:
+    """Collapse readings of the same marker on the same draw date to a single
+    best entry. The same marker can land twice when a client uploads overlapping
+    files (the same panel twice, or a full panel plus a summary). Returns the
+    deduped readings and notes about any conflicting duplicates.
+    """
+    best: dict[tuple[str, object], Reading] = {}
+    notes: list[str] = []
+    for r in readings:
+        key = (r.canonical, r.draw_date)
+        cur = best.get(key)
+        if cur is None:
+            best[key] = r
+            continue
+        # Note when duplicates report different values (we keep the higher-quality
+        # one); identical duplicates are merged silently.
+        if r.value_str() != cur.value_str():
+            notes.append(
+                f"{r.display_name} on {r.draw_date}: duplicate entries disagree "
+                f"({cur.value_str()} {cur.unit} in {cur.source_file} vs "
+                f"{r.value_str()} {r.unit} in {r.source_file}); kept the "
+                f"higher-confidence one")
+        if _reading_rank(r) > _reading_rank(cur):
+            best[key] = r
+    # de-duplicate the conflict notes (same marker may collide several times)
+    notes = list(dict.fromkeys(notes))
+    return list(best.values()), notes
+
+
 def extract_all(docs: list[SourceDocument]) -> tuple[list[MarkerSeries], list[Reading], list[str]]:
     """Run extraction across all documents. Returns (series, readings, warnings)."""
     all_readings: list[Reading] = []
@@ -361,5 +398,7 @@ def extract_all(docs: list[SourceDocument]) -> tuple[list[MarkerSeries], list[Re
         readings, w = extract_document(doc)
         all_readings.extend(readings)
         warnings.extend(w)
+    all_readings, dup_notes = dedupe_readings(all_readings)
+    warnings.extend(dup_notes)
     series = build_series(all_readings)
     return series, all_readings, warnings

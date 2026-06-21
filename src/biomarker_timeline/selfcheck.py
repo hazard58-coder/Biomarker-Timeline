@@ -170,7 +170,14 @@ def _check_units(series: list[MarkerSeries]) -> CheckResult:
 def _check_ranges(readings: list[Reading]) -> CheckResult:
     details: list[str] = []
     for r in readings:
-        printed = bool(_RANGE_HINT.search(r.source_text))
+        # A bounded/qualitative value ("<0.5") puts a "<" in the source line that
+        # is the VALUE, not a range. Remove the value text before deciding whether
+        # the line also printed a reference range, so we don't false-positive.
+        src = r.source_text
+        if r.value is None and r.value_text:
+            src = re.sub(re.escape(r.value_text), " ", src, count=1)
+            src = re.sub(re.escape(re.sub(r"\s+", "", r.value_text)), " ", src, count=1)
+        printed = bool(_RANGE_HINT.search(src))
         if printed and not r.reference.has_range:
             details.append(
                 f"{r.display_name} ({r.source_file}): source line appears to print a "
