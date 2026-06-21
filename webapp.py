@@ -163,7 +163,7 @@ def _upload_form(error: str | None = None) -> str:
       and are not stored.</p>
     <hr class="rule"/>
     {err_html}
-    <form class="card" action="/generate" method="post" enctype="multipart/form-data">
+    <form id="genform" class="card" action="/generate" method="post" enctype="multipart/form-data">
       <label class="fld" for="name">Name for the report (optional)</label>
       <input type="text" id="name" name="name" placeholder="e.g. Jane Doe"/>
       <p class="hintrow">If left blank, we'll use the name printed on the labs.</p>
@@ -173,10 +173,83 @@ def _upload_form(error: str | None = None) -> str:
       <p class="hintrow">Select one or more PDF files (up to 40&nbsp;MB total).</p>
       <div class="spacer"></div>
       <button class="btn" type="submit">Generate my report</button>
-      <p class="hintrow">This takes a few seconds while your charts render.</p>
+      <p class="hintrow">Scanned reports can take up to a minute — keep this page open.</p>
     </form>
     {portal_link}
+    {_GEN_OVERLAY}
     """)
+
+
+# Loading experience shown while a report generates (the POST can take ~30-60s
+# for scanned reports read by AI vision). Submits via fetch so we control the
+# overlay, trigger the PDF download, or swap in an error/review page.
+_GEN_OVERLAY = """
+<div id="gen-overlay">
+  <div class="gen-box">
+    <div class="gen-spinner" id="gen-spinner"></div>
+    <div class="gen-bar" id="gen-bar"><div class="gen-bar-fill"></div></div>
+    <div class="gen-msg" id="gen-msg">Reading your lab PDFs…</div>
+    <div class="gen-sub" id="gen-sub">Working hard on your report — please keep this page open.</div>
+  </div>
+</div>
+<style>
+#gen-overlay{position:fixed;inset:0;background:rgba(14,15,18,.96);z-index:200;
+  display:none;align-items:center;justify-content:center;text-align:center;padding:24px;}
+#gen-overlay.show{display:flex;}
+.gen-box{max-width:460px;}
+.gen-spinner{width:54px;height:54px;margin:0 auto 22px;border-radius:50%;
+  border:4px solid #2C313A;border-top-color:#B87333;animation:gen-spin .9s linear infinite;}
+@keyframes gen-spin{to{transform:rotate(360deg);}}
+.gen-bar{height:6px;background:#1B1E24;border-radius:4px;overflow:hidden;margin:0 auto 18px;max-width:320px;}
+.gen-bar-fill{height:100%;width:38%;background:linear-gradient(90deg,#B87333,#C9A227);border-radius:4px;
+  animation:gen-slide 1.5s ease-in-out infinite;}
+@keyframes gen-slide{0%{transform:translateX(-110%);}100%{transform:translateX(290%);}}
+.gen-msg{font-family:'Oswald',sans-serif;font-weight:600;font-size:18px;color:#ECEAE4;
+  letter-spacing:.02em;min-height:26px;transition:opacity .3s;}
+.gen-sub{color:#9AA0A6;font-size:13px;margin-top:12px;}
+</style>
+<script>
+(function(){
+  var form=document.getElementById('genform'); if(!form) return;
+  var overlay=document.getElementById('gen-overlay'), msgEl=document.getElementById('gen-msg');
+  var msgs=["Reading your lab PDFs…","Finding every biomarker…","Reading scanned pages with AI…",
+    "Lining up your draws by date…","Charting your trends…",
+    "Double-checking every value against the source…","Building your branded report…",
+    "Adding the finishing touches…","Good things take a moment — hang tight.",
+    "Your report is on its way."];
+  var idx=0,timer=null;
+  function rotate(){idx=(idx+1)%msgs.length;msgEl.style.opacity=0;
+    setTimeout(function(){msgEl.textContent=msgs[idx];msgEl.style.opacity=1;},300);}
+  function fname(r){var cd=r.headers.get('Content-Disposition')||'';
+    var m=cd.match(/filename="?([^"]+)"?/);return m?m[1]:'Biomarker_Timeline.pdf';}
+  function done(t,s){clearInterval(timer);
+    document.getElementById('gen-spinner').style.display='none';
+    document.getElementById('gen-bar').style.display='none';
+    msgEl.textContent=t; document.getElementById('gen-sub').textContent=s;}
+  form.addEventListener('submit',function(e){
+    e.preventDefault();
+    overlay.classList.add('show'); idx=0; msgEl.textContent=msgs[0];
+    timer=setInterval(rotate,3000);
+    fetch(form.action,{method:'POST',body:new FormData(form)}).then(function(resp){
+      var ct=resp.headers.get('Content-Type')||'';
+      if(ct.indexOf('application/pdf')!==-1){
+        var dn=fname(resp);
+        return resp.blob().then(function(b){
+          var u=URL.createObjectURL(b),a=document.createElement('a');
+          a.href=u;a.download=dn;document.body.appendChild(a);a.click();a.remove();
+          setTimeout(function(){URL.revokeObjectURL(u);},5000);
+          done('Your report is ready ✓','It just downloaded — check your downloads. You can build another anytime.');
+        });
+      }
+      return resp.text().then(function(h){clearInterval(timer);
+        document.open();document.write(h);document.close();});
+    }).catch(function(err){
+      done('Connection interrupted','Please check your connection and try again. ('+err+')');
+    });
+  });
+})();
+</script>
+"""
 
 
 def _paywall(canceled: bool = False, error: str | None = None,

@@ -34,7 +34,7 @@ KNOWN_ONLY = os.environ.get("AI_KNOWN_ONLY", "").strip().lower() in ("1", "true"
 # Vision: read scanned/image pages (no text layer). Default on when AI is enabled.
 VISION = os.environ.get("AI_VISION", "1").strip().lower() not in ("0", "false", "no", "off")
 VISION_MAX_PAGES = int(os.environ.get("AI_VISION_MAX_PAGES", "40"))
-VISION_CONCURRENCY = max(1, int(os.environ.get("AI_VISION_CONCURRENCY", "5")))
+VISION_CONCURRENCY = max(1, int(os.environ.get("AI_VISION_CONCURRENCY", "6")))
 VISION_DPI = int(os.environ.get("AI_VISION_DPI", "150"))
 AI_TIMEOUT = float(os.environ.get("AI_TIMEOUT", "60"))  # per-call seconds
 _MAX_CHARS = 60000
