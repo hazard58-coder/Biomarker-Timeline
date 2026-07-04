@@ -1,0 +1,235 @@
+"""Canonical biomarker dictionary and synonym normalization.
+
+Real LabCorp / Quest reports print the same analyte under many spellings
+("Testosterone, Total", "Total Testosterone", "TESTOSTERONE,TOTAL", "Test Total").
+This module maps every known spelling to a single canonical key so a marker's
+values line up into one time series across draws and across labs.
+
+Nothing here interprets values. It only recognizes and labels analytes.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+
+
+@dataclass(frozen=True)
+class MarkerDef:
+    key: str                       # canonical key
+    display_name: str              # canonical human label used in the report
+    panel: str                     # grouping for the report ("Androgens", "CBC", ...)
+    synonyms: tuple[str, ...] = field(default_factory=tuple)
+    typical_units: tuple[str, ...] = field(default_factory=tuple)
+
+
+# Ordered roughly the way a clinician reads a TRT panel. The report respects
+# this order so related markers sit near each other.
+MARKERS: list[MarkerDef] = [
+    MarkerDef("testosterone_total", "Testosterone, Total", "Androgens",
+              ("testosterone total", "total testosterone", "testosterone,total",
+               "testosterone serum", "testosterone, serum", "test total", "testosterone"),
+              ("ng/dL",)),
+    MarkerDef("testosterone_free", "Testosterone, Free", "Androgens",
+              ("testosterone free", "free testosterone", "testosterone,free",
+               "free testosterone direct", "testosterone free direct",
+               "free test", "testosterone, free (direct)"),
+              ("pg/mL", "ng/dL")),
+    MarkerDef("shbg", "Sex Hormone Binding Globulin (SHBG)", "Androgens",
+              ("shbg", "sex hormone binding globulin", "sex hormone-binding globulin",
+               "sex hormone binding globulin (shbg)"),
+              ("nmol/L",)),
+    MarkerDef("estradiol", "Estradiol", "Hormones",
+              ("estradiol", "estradiol sensitive", "estradiol, sensitive",
+               "estradiol (sensitive)", "e2", "estradiol, ultrasensitive",
+               "estradiol ultrasensitive"),
+              ("pg/mL",)),
+    MarkerDef("lh", "Luteinizing Hormone (LH)", "Hormones",
+              ("lh", "luteinizing hormone", "luteinizing hormone (lh)", "lutenizing hormone"),
+              ("mIU/mL",)),
+    MarkerDef("fsh", "Follicle Stimulating Hormone (FSH)", "Hormones",
+              ("fsh", "follicle stimulating hormone", "follicle-stimulating hormone",
+               "follicle stimulating hormone (fsh)"),
+              ("mIU/mL",)),
+    MarkerDef("prolactin", "Prolactin", "Hormones",
+              ("prolactin",), ("ng/mL",)),
+    MarkerDef("tsh", "Thyroid Stimulating Hormone (TSH)", "Thyroid",
+              ("tsh", "thyroid stimulating hormone", "thyroid-stimulating hormone"),
+              ("uIU/mL", "mIU/L")),
+    MarkerDef("psa", "Prostate Specific Antigen (PSA)", "Prostate",
+              ("psa", "prostate specific antigen", "prostate-specific antigen",
+               "psa, total", "psa total", "prostate specific ag, total"),
+              ("ng/mL",)),
+    MarkerDef("hematocrit", "Hematocrit", "Complete Blood Count",
+              ("hematocrit", "hct", "haematocrit"), ("%",)),
+    MarkerDef("hemoglobin", "Hemoglobin", "Complete Blood Count",
+              ("hemoglobin", "hgb", "haemoglobin"), ("g/dL",)),
+    MarkerDef("rbc", "Red Blood Cell Count", "Complete Blood Count",
+              ("rbc", "red blood cell count", "red blood cells", "erythrocytes"),
+              ("x10E6/uL", "M/uL")),
+    MarkerDef("cholesterol_total", "Cholesterol, Total", "Lipid Panel",
+              ("cholesterol total", "total cholesterol", "cholesterol,total",
+               "cholesterol, total", "cholesterol serum"),
+              ("mg/dL",)),
+    MarkerDef("hdl", "HDL Cholesterol", "Lipid Panel",
+              ("hdl", "hdl cholesterol", "hdl-c", "hdl chol", "cholesterol hdl"),
+              ("mg/dL",)),
+    MarkerDef("ldl", "LDL Cholesterol", "Lipid Panel",
+              ("ldl", "ldl cholesterol", "ldl-c", "ldl chol calc", "ldl chol",
+               "ldl cholesterol calc", "ldl-cholesterol"),
+              ("mg/dL",)),
+    MarkerDef("triglycerides", "Triglycerides", "Lipid Panel",
+              ("triglycerides", "triglycerides", "trig", "triglyceride"),
+              ("mg/dL",)),
+    MarkerDef("apob", "Apolipoprotein B", "Lipid Panel",
+              ("apolipoprotein b", "apo b", "apob"), ("mg/dL",)),
+    # --- Thyroid ---
+    MarkerDef("free_t3", "Free T3", "Thyroid",
+              ("free t3", "ft3", "t3 free", "triiodothyronine free",
+               "triiodothyronine, free", "free triiodothyronine"),
+              ("pg/mL",)),
+    MarkerDef("free_t4", "Free T4", "Thyroid",
+              ("free t4", "ft4", "t4 free", "thyroxine free", "thyroxine, free",
+               "free thyroxine"),
+              ("ng/dL",)),
+    # --- Growth factors ---
+    MarkerDef("igf1", "Insulin-Like Growth Factor 1 (IGF-1)", "Growth Factors",
+              ("igf-1", "igf 1", "igf1", "insulin like growth factor 1",
+               "insulin-like growth factor 1", "somatomedin c", "somatomedin-c"),
+              ("ng/mL",)),
+    # --- Metabolic ---
+    MarkerDef("glucose", "Glucose, Fasting", "Metabolic",
+              ("glucose", "fasting glucose", "glucose fasting", "glucose serum"),
+              ("mg/dL",)),
+    MarkerDef("insulin", "Insulin, Fasting", "Metabolic",
+              ("insulin", "fasting insulin", "insulin fasting"),
+              ("uIU/mL",)),
+    MarkerDef("hemoglobin_a1c", "Hemoglobin A1c", "Metabolic",
+              ("hemoglobin a1c", "hba1c", "hgb a1c", "a1c", "glycohemoglobin",
+               "hemoglobin a1c (hba1c)"),
+              ("%",)),
+    # --- Inflammation ---
+    MarkerDef("hscrp", "hs-CRP", "Inflammation",
+              ("hs crp", "hscrp", "hs-crp", "high sensitivity crp",
+               "c reactive protein cardiac", "cardio crp", "c-reactive protein",
+               "c reactive protein"),
+              ("mg/L",)),
+    MarkerDef("homocysteine", "Homocysteine", "Inflammation",
+              ("homocysteine",), ("umol/L",)),
+    # --- Nutrients ---
+    MarkerDef("vitamin_d", "Vitamin D, 25-OH", "Nutrients",
+              ("vitamin d", "vitamin d 25 oh total", "vitamin d 25-hydroxy",
+               "25 hydroxyvitamin d", "25-oh vitamin d", "vitamin d,25-oh,total",
+               "vitamin d total"),
+              ("ng/mL",)),
+    MarkerDef("ferritin", "Ferritin", "Nutrients",
+              ("ferritin",), ("ng/mL",)),
+    MarkerDef("vitamin_b12", "Vitamin B12", "Nutrients",
+              ("vitamin b12", "b12", "cobalamin", "vitamin b-12"), ("pg/mL",)),
+    MarkerDef("folate", "Folate", "Nutrients",
+              ("folate", "folic acid", "folate serum"), ("ng/mL",)),
+    # --- Adrenal / DHEA ---
+    MarkerDef("cortisol", "Cortisol", "Adrenal",
+              ("cortisol", "cortisol total", "cortisol, total"), ("mcg/dL",)),
+    MarkerDef("dhea_s", "DHEA-Sulfate", "Adrenal",
+              ("dhea sulfate", "dhea-s", "dheas", "dhea-sulfate",
+               "dehydroepiandrosterone sulfate"),
+              ("mcg/dL",)),
+    MarkerDef("progesterone", "Progesterone", "Hormones",
+              ("progesterone",), ("ng/mL",)),
+]
+
+_PANEL_ORDER = [
+    "Androgens", "Hormones", "Prostate", "Thyroid", "Growth Factors",
+    "Metabolic", "Lipid Panel", "Inflammation", "Complete Blood Count",
+    "Nutrients", "Adrenal",
+]
+
+# Build lookup tables.
+_BY_KEY: dict[str, MarkerDef] = {m.key: m for m in MARKERS}
+_SYNONYM_INDEX: dict[str, str] = {}
+for _m in MARKERS:
+    _SYNONYM_INDEX[_normalize := _m.display_name.lower()] = _m.key
+    for _s in _m.synonyms:
+        _SYNONYM_INDEX[_s.lower()] = _m.key
+
+
+def _clean(name: str) -> str:
+    """Lowercase and squeeze a printed label for matching."""
+    s = name.lower().strip()
+    # drop method/assay/flag tokens labs append (e.g. "Testosterone, Total, MS",
+    # "Estradiol, LCMSMS", "Vitamin D, IA"), and punctuation noise.
+    s = re.sub(
+        r"\b(serum|plasma|lc/ms-ms|lc/ms/ms|lcmsms|ms|ia|eia|cia|ecl|hplc|"
+        r"direct|total ms|calc|calculated|by .*)\b",
+        " ", s)
+    s = s.replace(",", " ").replace(".", " ").replace("-", " ")
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def canonical_for(label: str) -> tuple[str | None, float]:
+    """Resolve a printed analyte label to a canonical key with a match confidence.
+
+    Returns (canonical_key | None, confidence_contribution in 0..1).
+    Exact synonym hits score 1.0; cleaned/substring hits score lower so the
+    SELF-CHECK stage can route fuzzy matches to human review.
+    """
+    raw = label.lower().strip().rstrip(":")
+    if raw in _SYNONYM_INDEX:
+        return _SYNONYM_INDEX[raw], 1.0
+
+    cleaned = _clean(label)
+    if not cleaned:
+        return None, 0.0
+    # Negated/derived analytes ("Non HDL Cholesterol", "Free T4 Index") are
+    # distinct from the base marker — don't let them fuzzy-match to it.
+    if cleaned.startswith("non ") or "ratio" in cleaned or "index" in cleaned:
+        if cleaned not in _SYNONYM_INDEX:
+            return None, 0.0
+    if cleaned in _SYNONYM_INDEX:
+        return _SYNONYM_INDEX[cleaned], 0.95
+
+    # token-aware containment match against each synonym's cleaned form.
+    # We pad with spaces so matches respect whole-token boundaries (avoids
+    # "lh" matching inside an unrelated word).
+    padded = f" {cleaned} "
+    best_key, best_score = None, 0.0
+    for syn, key in _SYNONYM_INDEX.items():
+        cs = _clean(syn)
+        if not cs or len(cs) < 3:
+            continue
+        if cs == cleaned:
+            return key, 0.95
+        if f" {cs} " in padded or padded.strip() in f" {cs} ":
+            # Score by how completely the synonym covers the printed label, so a
+            # near-complete match (e.g. "testosterone total ms") scores high and
+            # a partial one ("testosterone" inside "testosterone bioavailable")
+            # scores low enough to be rejected.
+            score = round(0.9 * (min(len(cs), len(cleaned)) / max(len(cs), len(cleaned))), 3)
+            if score > best_score:
+                best_key, best_score = key, score
+    return best_key, best_score
+
+
+def display_name(key: str) -> str:
+    return _BY_KEY[key].display_name if key in _BY_KEY else key
+
+
+def panel_for(key: str) -> str:
+    return _BY_KEY[key].panel if key in _BY_KEY else "Other"
+
+
+def panel_sort_key(key: str) -> tuple[int, int]:
+    """Sort canonical keys by panel order, then by their order within MARKERS."""
+    m = _BY_KEY.get(key)
+    if not m:
+        return (len(_PANEL_ORDER), 999)
+    panel_idx = _PANEL_ORDER.index(m.panel) if m.panel in _PANEL_ORDER else len(_PANEL_ORDER)
+    within = next((i for i, x in enumerate(MARKERS) if x.key == key), 999)
+    return (panel_idx, within)
+
+
+def known_units(key: str) -> tuple[str, ...]:
+    m = _BY_KEY.get(key)
+    return m.typical_units if m else ()

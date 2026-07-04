@@ -1,0 +1,33 @@
+# Client PDFs and generated reports never get committed (privacy + noise).
+input/*.pdf
+input/*.PDF
+output/*.pdf
+output/*.txt
+
+# Keep the folders themselves in the repo.
+!input/.gitkeep
+!output/.gitkeep
+
+# The sample deliverable IS committed (it's the showcase), so samples/ is NOT ignored.
+
+# Entitlement datastore (one-report-per-payment records)
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/

@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "biomarker-timeline"
+version = "1.0.0"
+description = "Biomarker Timeline by Vitalis Forge — organize and visualize a client's own lab values over time (data organization only; not medical advice)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Proprietary" }
+dependencies = [
+    "weasyprint>=60",
+    "pdfplumber>=0.11",
+    "matplotlib>=3.7",
+    "fonttools>=4.40",
+]
+
+[project.scripts]
+biomarker-timeline = "biomarker_timeline.__main__:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+biomarker_timeline = ["assets/fonts/*.ttf"]

@@ -1,0 +1,21 @@
+# Biomarker Timeline — runtime dependencies
+# Install with:  pip install -r requirements.txt
+#
+# WeasyPrint renders the HTML/CSS report to PDF. On most systems the pip
+# install is enough; if WeasyPrint complains about missing system libraries,
+# see https://doc.courtbouillon.org/weasyprint/stable/first_steps.html
+weasyprint>=60
+pdfplumber>=0.11
+matplotlib>=3.7
+fonttools>=4.40
+
+# Hosted web service only (webapp.py). The CLI does not need these, but they are
+# small and harmless to install alongside it.
+flask>=3.0
+gunicorn>=21.2
+stripe>=7.0
+
+# Optional: AI extraction fallback (reads lab layouts the regex parser misses,
+# including scanned/image PDFs via vision). Only used when ANTHROPIC_API_KEY is set.
+anthropic>=0.40
+pymupdf>=1.24

@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Biomarker Timeline — by Vitalis Forge</title>
+<meta name="description" content="Turn your scattered lab PDFs into one clean report: every biomarker charted over time next to the lab's own reference range. Built to print and hand to your doctor. Data organization, not medical advice."/>
+<meta property="og:title" content="Biomarker Timeline — see your own bloodwork, over time"/>
+<meta property="og:description" content="Upload your lab PDFs, get back one report that trends every marker across every draw. Built to hand to your physician."/>
+<meta property="og:type" content="website"/>
+<meta name="theme-color" content="#0E0F12"/>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%230E0F12'/%3E%3Cpath d='M12 44 L26 30 L36 38 L52 20' stroke='%23B87333' stroke-width='6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"/>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=Oswald:wght@600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --obsidian:#0E0F12; --charcoal:#1B1E24; --copper:#B87333;
+    --gold:#C9A227; --ember:#C8602F; --offwhite:#ECEAE4; --muted:#9AA0A6;
+    --hairline:#2C313A;
+  }
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  body{
+    margin:0; background:var(--obsidian); color:var(--offwhite);
+    font-family:'Inter',system-ui,sans-serif; line-height:1.6; font-size:17px;
+  }
+  .wrap{max-width:760px; margin:0 auto; padding:0 24px;}
+  h1,h2,h3{font-family:'Oswald',sans-serif; letter-spacing:0.02em; margin:0;}
+  a{color:var(--gold);}
+  section{padding:8px 0; scroll-margin-top:80px;}
+
+  /* sticky nav */
+  .site-header{position:sticky; top:0; z-index:50;
+    background:rgba(14,15,18,0.92); backdrop-filter:blur(6px);
+    border-bottom:1px solid var(--hairline);}
+  .nav{display:flex; justify-content:space-between; align-items:center; padding:13px 0;}
+  .wordmark{font-family:'Oswald',sans-serif; font-weight:700; font-size:19px;
+    letter-spacing:0.18em; color:var(--copper); text-decoration:none;}
+  .navlinks{display:flex; align-items:center; gap:20px;}
+  .navlinks a{color:var(--muted); font-family:'Oswald',sans-serif; font-weight:600;
+    font-size:12.5px; letter-spacing:0.08em; text-transform:uppercase; text-decoration:none;}
+  .navlinks a:hover{color:var(--offwhite);}
+  .nav-cta{color:var(--obsidian)!important; background:var(--gold);
+    padding:8px 16px; border-radius:4px;}
+
+  .hero{padding:60px 0 36px;}
+  .kicker{font-family:'Oswald',sans-serif; font-weight:600; font-size:13px;
+    letter-spacing:0.24em; color:var(--gold); text-transform:uppercase;}
+  .hero h1{font-size:54px; line-height:1.02; font-weight:700; margin:14px 0 18px;}
+  .hero p.lead{font-size:20px; color:var(--offwhite); max-width:620px;}
+  .rule{border:0; border-top:2px solid var(--copper); margin:34px 0;}
+  .rule-thin{border:0; border-top:1px solid var(--hairline); margin:30px 0;}
+
+  .btn-row{display:flex; gap:14px; flex-wrap:wrap; margin-top:26px; align-items:center;}
+  .btn{display:inline-block; font-family:'Oswald',sans-serif; font-weight:600;
+    font-size:17px; letter-spacing:0.04em; padding:13px 26px; border-radius:4px;
+    text-decoration:none;}
+  .btn-primary{color:var(--obsidian); background:var(--gold);}
+  .btn-ghost{color:var(--offwhite); border:1px solid var(--hairline);}
+
+  h2{font-size:15px; letter-spacing:0.14em; text-transform:uppercase;
+    color:var(--copper); font-weight:600; margin-bottom:14px;}
+
+  ul.plain{list-style:none; padding:0; margin:0;}
+  ul.plain li{padding:10px 0 10px 26px; position:relative; border-bottom:1px solid var(--hairline);}
+  ul.plain li:before{content:"›"; position:absolute; left:4px; color:var(--copper); font-weight:700;}
+  .who li b{color:var(--gold);}
+
+  .price-row{display:flex; gap:18px; flex-wrap:wrap; margin-top:6px;}
+  .price-card{flex:1 1 240px; background:var(--charcoal); border:1px solid var(--hairline);
+    border-top:3px solid var(--copper); border-radius:4px; padding:22px 24px;}
+  .price-card .amt{font-family:'Oswald',sans-serif; font-weight:700; font-size:38px; color:var(--offwhite);}
+  .price-card .per{color:var(--muted); font-size:14px;}
+  .price-card .lbl{margin-top:6px; color:var(--offwhite);}
+
+  .faq-item{border-bottom:1px solid var(--hairline); padding:15px 0;}
+  .faq-q{font-family:'Oswald',sans-serif; font-weight:600; color:var(--offwhite);
+    font-size:16px; margin-bottom:5px;}
+  .faq-a{color:var(--muted); font-size:15px;}
+  .faq-a a{color:var(--gold);}
+
+  .cta{background:var(--charcoal); border:1px solid var(--hairline);
+    border-left:4px solid var(--gold); border-radius:4px; padding:26px 28px; margin:8px 0;}
+  .cta h3{font-size:24px; font-weight:700; margin-bottom:8px;}
+  .cta .email{display:inline-block; margin-top:10px; font-family:'Oswald',sans-serif;
+    font-weight:600; font-size:20px; letter-spacing:0.04em; color:var(--obsidian);
+    background:var(--gold); padding:12px 22px; border-radius:4px; text-decoration:none;}
+  .cta .note{color:var(--muted); font-size:14px; margin-top:12px;}
+
+  .disclaimer{background:var(--charcoal); border:1px solid var(--hairline);
+    border-top:3px solid var(--ember); border-radius:4px; padding:20px 24px; margin:6px 0 50px;}
+  .disclaimer h3{font-size:13px; letter-spacing:0.14em; color:var(--ember);
+    text-transform:uppercase; font-weight:700; margin-bottom:8px;}
+  .disclaimer p{font-size:14px; color:var(--offwhite); margin:0;}
+
+  footer{border-top:1px solid var(--hairline); padding:24px 0 60px; color:var(--muted); font-size:13px;}
+
+  @media (max-width:600px){
+    .hero h1{font-size:38px;}
+    .nav{flex-wrap:wrap; gap:8px 14px;}
+    .navlinks{gap:14px;}
+    .navlinks a{font-size:11px; letter-spacing:0.04em;}
+  }
+</style>
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap nav">
+      <a class="wordmark" href="/">VITALIS&nbsp;FORGE</a>
+      <nav class="navlinks">
+        <a href="#pricing">Pricing</a>
+        <a href="#faq">FAQ</a>
+        <a href="/login">Sign in</a>
+        <a class="nav-cta" href="/app">Get started</a>
+      </nav>
+    </div>
+  </header>
+
+  <div class="wrap">
+    <div class="hero">
+      <div class="kicker">Biomarker Timeline</div>
+      <h1>See your own bloodwork,<br/>over time.</h1>
+      <p class="lead">You get labs every 8&ndash;12 weeks. They end up scattered
+        across PDFs and patient portals, and you can never line them up to see the
+        trend. Upload your lab PDFs and get back one clean report that charts every
+        marker across every draw &mdash; built to print and hand to your own doctor.</p>
+      <div class="btn-row">
+        <a class="btn btn-primary" href="/app">Get started</a>
+        <a class="btn btn-ghost" href="/sample.pdf">See a sample report</a>
+      </div>
+    </div>
+
+    <hr class="rule"/>
+
+    <section>
+      <h2>What it is</h2>
+      <p>A single PDF report. It reads the lab PDFs you already have &mdash; from
+        any lab, across as many draw dates as you&rsquo;ve collected &mdash; pulls
+        out every biomarker, and trends each one over time next to that lab&rsquo;s
+        own printed reference range. It organizes and visualizes your data. It does
+        not interpret it.</p>
+    </section>
+
+    <hr class="rule-thin"/>
+
+    <section>
+      <h2>Who it&rsquo;s for</h2>
+      <ul class="plain who">
+        <li><b>People on TRT, HRT, or peptide protocols</b> who draw bloodwork
+          every 8&ndash;12 weeks.</li>
+        <li><b>Anyone tracking a panel over time</b> &mdash; testosterone,
+          estradiol, SHBG, hematocrit, PSA, LH, lipids, and more.</li>
+        <li><b>People who want one document to bring to their physician</b>
+          instead of a stack of portal logins.</li>
+      </ul>
+    </section>
+
+    <hr class="rule-thin"/>
+
+    <section>
+      <h2>What you get</h2>
+      <ul class="plain">
+        <li>A trend chart for every biomarker &mdash; value over time, with the
+          lab&rsquo;s own reference range shaded in.</li>
+        <li>A master data table with every value from every draw, side by side.</li>
+        <li>A factual flag wherever a value falls outside the lab&rsquo;s own
+          printed range.</li>
+        <li>A clean, branded PDF designed to be printed and handed to your doctor.</li>
+      </ul>
+    </section>
+
+    <hr class="rule"/>
+
+    <section id="pricing">
+      <h2>Price</h2>
+      <div class="price-row">
+        <div class="price-card">
+          <div class="amt">$79</div>
+          <div class="per">one-time</div>
+          <div class="lbl">One report from the lab PDFs you upload.</div>
+        </div>
+        <div class="price-card">
+          <div class="amt">$29<span class="per"> / month</span></div>
+          <div class="lbl">Keep it updated with every new draw. Cancel anytime.</div>
+        </div>
+      </div>
+      <div class="btn-row">
+        <a class="btn btn-primary" href="/app">Get started</a>
+      </div>
+    </section>
+
+    <hr class="rule"/>
+
+    <section id="faq">
+      <h2>FAQ</h2>
+
+      <div class="faq-item">
+        <div class="faq-q">Is this medical advice?</div>
+        <div class="faq-a">No. Biomarker Timeline is a data-organization report. It
+          transcribes and charts the values from the lab PDFs you provide, next to
+          each lab&rsquo;s own printed reference range. It does not interpret those
+          values, diagnose any condition, or recommend any treatment. Review all
+          results with a licensed physician.</div>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-q">Which labs does it work with?</div>
+        <div class="faq-a">Any lab that gives you a PDF &mdash; LabCorp, Quest,
+          hospital and clinic portals, and others. You can combine multiple labs and
+          as many draw dates as you have.</div>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-q">How do I get my lab PDFs?</div>
+        <div class="faq-a">Download them from your lab&rsquo;s patient portal
+          (LabCorp, Quest, MyChart, etc.) &mdash; usually under Results or Documents,
+          with a &ldquo;Download PDF&rdquo; option. Upload those files as-is.</div>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-q">What biomarkers does it track?</div>
+        <div class="faq-a">Whatever is printed on your labs &mdash; for example total
+          and free testosterone, estradiol, SHBG, LH, hematocrit, PSA, and a lipid
+          panel. Each marker that appears across your draws gets its own trend.</div>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-q">What happens to my files?</div>
+        <div class="faq-a">They&rsquo;re used only to build your report, then deleted.
+          Your files are not stored or shared.</div>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-q">What&rsquo;s the difference between $79 and $29/month?</div>
+        <div class="faq-a">$79 is a single report from the PDFs you upload. $29/month
+          keeps your timeline updated with each new draw &mdash; upload a new PDF and
+          regenerate whenever you get fresh labs.</div>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-q">How do I cancel the subscription?</div>
+        <div class="faq-a"><a href="/login">Sign in</a> and open the billing portal to
+          cancel in a click, or email
+          <a href="mailto:contact@vitalisforge.com">contact@vitalisforge.com</a>.</div>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-q">Can I bring it to my doctor?</div>
+        <div class="faq-a">Yes &mdash; that&rsquo;s the point. The report is built to
+          be printed and handed to your physician at your next appointment.</div>
+      </div>
+    </section>
+
+    <hr class="rule"/>
+
+    <section>
+      <div class="cta">
+        <h3>Ready when you are.</h3>
+        <p>Upload your lab PDFs and the name you&rsquo;d like on the report, and
+          you&rsquo;ll get your Biomarker Timeline back to print.</p>
+        <a class="email" href="/app">Get started</a>
+        <div class="note">Prefer to send them by email? Reach us at
+          <a href="mailto:contact@vitalisforge.com?subject=Biomarker%20Timeline%20%E2%80%94%20my%20labs">contact@vitalisforge.com</a>.</div>
+      </div>
+    </section>
+
+    <div class="disclaimer">
+      <h3>Please read</h3>
+      <p>Biomarker Timeline is a data-organization report, not medical advice. It
+        transcribes and charts the values from the lab PDFs you provide, next to
+        each lab&rsquo;s own printed reference range. It does not interpret those
+        values, diagnose any condition, or prescribe any treatment, dose, supplement,
+        or action. Review all results with a licensed physician, who is the
+        appropriate person to discuss what they mean for you.</p>
+    </div>
+  </div>
+
+  <footer>
+    <div class="wrap">
+      Biomarker Timeline &middot; a report produced under the Vitalis Forge
+      wellness brand &middot; data organization only, not medical advice.
+    </div>
+  </footer>
+</body>
+</html>

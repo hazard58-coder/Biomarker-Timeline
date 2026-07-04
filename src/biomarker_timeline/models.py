@@ -1,0 +1,219 @@
+"""Core data structures for the Biomarker Timeline pipeline.
+
+These are deliberately plain dataclasses with no behavior beyond simple,
+factual helpers. Nothing here interprets a value — a `Reading` only knows
+whether it falls inside or outside the lab's OWN printed reference range,
+which is transcription, not advice.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from datetime import date
+from typing import Optional
+
+
+@dataclass
+class ReferenceRange:
+    """A lab's own printed reference range for a marker.
+
+    Exactly as printed on the source PDF. We never invent a range; if the lab
+    did not print one, `low`/`high` stay None and the report says so.
+    """
+
+    low: Optional[float] = None
+    high: Optional[float] = None
+    raw: str = ""  # the literal text as it appeared on the page, e.g. ">39" or "264-916"
+
+    @property
+    def has_range(self) -> bool:
+        return self.low is not None or self.high is not None
+
+    def contains(self, value: float) -> Optional[bool]:
+        """Return True/False if the value is within the printed range, else None.
+
+        None means "no range was printed, so no factual statement can be made."
+        This is a purely arithmetic comparison against the lab's own numbers.
+        """
+        if not self.has_range:
+            return None
+        if self.low is not None and value < self.low:
+            return False
+        if self.high is not None and value > self.high:
+            return False
+        return True
+
+    def display(self) -> str:
+        if self.raw:
+            return self.raw
+        if self.low is not None and self.high is not None:
+            return f"{_fmt(self.low)}–{_fmt(self.high)}"
+        if self.high is not None:
+            return f"≤{_fmt(self.high)}"
+        if self.low is not None:
+            return f"≥{_fmt(self.low)}"
+        return "—"
+
+
+@dataclass
+class Reading:
+    """A single biomarker value from a single lab draw.
+
+    `source_text` is the exact line the value was transcribed from, retained so
+    the SELF-CHECK stage can re-verify every number against its source.
+    """
+
+    canonical: str          # canonical marker key, e.g. "testosterone_total"
+    display_name: str       # human label, e.g. "Testosterone, Total"
+    value: Optional[float]  # numeric value, or None for bounded/qualitative results
+    unit: str
+    reference: ReferenceRange
+    draw_date: date
+    confidence: float       # 0.0 - 1.0
+    source_file: str = ""
+    source_text: str = ""   # the literal source line, for re-verification
+    review_flags: list[str] = field(default_factory=list)
+    # For results that aren't a plain number — "<0.1", ">300", "Negative",
+    # "Detected". Transcribed verbatim; `value` stays None so it is never
+    # plotted or compared numerically (no invented numbers, no false flags).
+    value_text: str = ""
+    # The lab's OWN out-of-range marker for this value, if it printed one, as a
+    # neutral key: "above" (H), "below" (L), or "flagged" (*/A/AA/critical).
+    # Transcription of the lab's judgment, not ours.
+    lab_flag: str = ""
+
+    @property
+    def is_numeric(self) -> bool:
+        return self.value is not None
+
+    @property
+    def in_range(self) -> Optional[bool]:
+        if self.value is None:
+            return None
+        return self.reference.contains(self.value)
+
+    @property
+    def out_of_range(self) -> bool:
+        """True only when the lab printed a range AND the value falls outside it."""
+        return self.in_range is False
+
+    def range_position(self) -> Optional[str]:
+        """Factual position relative to the printed range: 'below' / 'above'.
+
+        This is transcription of an arithmetic comparison, not a judgment about
+        what the position means for the person.
+        """
+        if self.value is None or not self.reference.has_range:
+            return None
+        if self.reference.low is not None and self.value < self.reference.low:
+            return "below"
+        if self.reference.high is not None and self.value > self.reference.high:
+            return "above"
+        return None
+
+    @property
+    def flagged(self) -> bool:
+        """Shown as flagged when OUR comparison puts it outside the lab's printed
+        range, OR — when we have no comparable range — the lab printed its own
+        out-of-range marker."""
+        return self.out_of_range or (self.in_range is None and bool(self.lab_flag))
+
+    def flag_label(self) -> Optional[str]:
+        """Factual, neutral label for the flag (never uses judgment words)."""
+        if self.out_of_range:
+            return f"{self.range_position() or 'outside'} range"
+        if self.in_range is None and self.lab_flag:
+            if self.lab_flag in ("above", "below"):
+                return f"lab: {self.lab_flag} range"
+            return "lab-flagged"
+        return None
+
+    def value_str(self) -> str:
+        if self.value is None:
+            return self.value_text or "—"
+        return _fmt(self.value)
+
+
+@dataclass
+class MarkerSeries:
+    """The full time series for one canonical marker across all draws."""
+
+    canonical: str
+    display_name: str
+    readings: list[Reading] = field(default_factory=list)
+
+    def ordered(self) -> list[Reading]:
+        return sorted(self.readings, key=lambda r: r.draw_date)
+
+    def numeric_ordered(self) -> list[Reading]:
+        """Date-ordered readings that have a plottable numeric value."""
+        return [r for r in self.ordered() if r.value is not None]
+
+    @property
+    def has_numeric(self) -> bool:
+        return any(r.value is not None for r in self.readings)
+
+    @property
+    def units(self) -> list[str]:
+        seen: list[str] = []
+        for r in self.readings:
+            if r.unit not in seen:
+                seen.append(r.unit)
+        return seen
+
+    @property
+    def unit(self) -> str:
+        u = self.units
+        return u[0] if u else ""
+
+    @property
+    def has_unit_mismatch(self) -> bool:
+        # Compare NORMALIZED units so equivalent spellings (e.g. "Million/uL" vs
+        # "x10(6)/uL") aren't treated as a real mismatch.
+        norm = {normalize_unit(u) for u in self.units if u}
+        return len(norm) > 1
+
+    @property
+    def latest(self) -> Reading:
+        return self.ordered()[-1]
+
+    @property
+    def n_out_of_range(self) -> int:
+        return sum(1 for r in self.readings if r.out_of_range)
+
+    @property
+    def n_flagged(self) -> int:
+        return sum(1 for r in self.readings if r.flagged)
+
+
+# Equivalent unit spellings collapse to one canonical form so the same marker
+# reported as e.g. "Million/uL" and "x10(6)/uL" doesn't look like a mismatch.
+_UNIT_EQUIV = {
+    "million/ul": "x10E6/uL", "x10e6/ul": "x10E6/uL", "x10(6)/ul": "x10E6/uL",
+    "x10^6/ul": "x10E6/uL", "10*6/ul": "x10E6/uL", "10e6/ul": "x10E6/uL",
+    "10^6/ul": "x10E6/uL", "m/ul": "x10E6/uL",
+    "thousand/ul": "x10E3/uL", "x10e3/ul": "x10E3/uL", "x10(3)/ul": "x10E3/uL",
+    "x10^3/ul": "x10E3/uL", "10*3/ul": "x10E3/uL", "10e3/ul": "x10E3/uL",
+    "10^3/ul": "x10E3/uL", "k/ul": "x10E3/uL",
+    "mg/dl": "mg/dL", "ng/dl": "ng/dL", "ng/ml": "ng/mL", "pg/ml": "pg/mL",
+    "g/dl": "g/dL", "miu/ml": "mIU/mL", "uiu/ml": "uIU/mL", "miu/l": "mIU/L",
+    "nmol/l": "nmol/L", "mmol/l": "mmol/L", "umol/l": "umol/L", "u/l": "U/L",
+    "iu/l": "IU/L", "mg/l": "mg/L", "mcg/dl": "mcg/dL", "ug/dl": "mcg/dL",
+}
+
+
+def normalize_unit(u: str) -> str:
+    """Collapse equivalent unit spellings to one canonical form (for comparison)."""
+    if not u:
+        return ""
+    key = re.sub(r"\s+", "", u).lower()
+    return _UNIT_EQUIV.get(key, u)
+
+
+def _fmt(x: float) -> str:
+    """Format a number without trailing-zero noise (652.0 -> '652', 25.10 -> '25.1')."""
+    if x == int(x):
+        return str(int(x))
+    s = f"{x:.2f}".rstrip("0").rstrip(".")
+    return s
