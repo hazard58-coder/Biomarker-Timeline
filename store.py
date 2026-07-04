@@ -103,13 +103,23 @@ def add_credit(session_id: str, email: str) -> None:
         con.commit()
 
 
+# A single payment can be recorded on BOTH ledgers: the Stripe webhook adds an
+# email-keyed credit, while the guest-mode redirect entitles the same checkout
+# session via cookie (consumed_sessions). The two queries below treat them as
+# one entitlement — a credit is spendable only while its session hasn't been
+# consumed the cookie way, and spending a credit also consumes the session —
+# so one payment can never yield two reports, whichever path runs first.
+_UNSPENT = ("consumed_at IS NULL AND session_id NOT IN "
+            "(SELECT session_id FROM consumed_sessions)")
+
+
 def available_credits(email: str) -> int:
     """How many unconsumed report credits this email holds."""
     if not _norm(email):
         return 0
     with _lock, _connect() as con:
         row = con.execute(
-            "SELECT COUNT(*) FROM credits WHERE email = ? AND consumed_at IS NULL",
+            f"SELECT COUNT(*) FROM credits WHERE email = ? AND {_UNSPENT}",
             (_norm(email),),
         ).fetchone()
         return int(row[0]) if row else 0
@@ -122,8 +132,8 @@ def consume_credit(email: str, note: str = "") -> bool:
         return False
     with _lock, _connect() as con:
         row = con.execute(
-            "SELECT session_id FROM credits WHERE email = ? AND consumed_at IS NULL "
-            "ORDER BY created_at LIMIT 1",
+            f"SELECT session_id FROM credits WHERE email = ? AND {_UNSPENT} "
+            f"ORDER BY created_at LIMIT 1",
             (_norm(email),),
         ).fetchone()
         if not row:
@@ -132,6 +142,11 @@ def consume_credit(email: str, note: str = "") -> bool:
             "UPDATE credits SET consumed_at = ? WHERE session_id = ? "
             "AND consumed_at IS NULL",
             (_now(), row[0]),
+        )
+        con.execute(
+            "INSERT OR IGNORE INTO consumed_sessions (session_id, consumed_at, note) "
+            "VALUES (?, ?, ?)",
+            (row[0], _now(), note or "credit consumed"),
         )
         con.commit()
         return True

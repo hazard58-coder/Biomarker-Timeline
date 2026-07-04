@@ -51,6 +51,31 @@ Railway redeploys when you save. Once `STRIPE_SECRET_KEY` is set, `/app` shows a
 4. You're redirected back to `/app` with the upload form. Upload labs and confirm
    a report downloads. (No real money moves in test mode.)
 
+## 4b. Add the webhook (strongly recommended)
+Without this, a buyer who pays and then **closes the tab on Stripe's receipt
+page** never makes it back to `/app` — the payment is collected but no report
+credit is ever recorded, and you find out via a support email. The webhook
+records the payment server-to-server, so the credit always lands (Stripe
+retries delivery for days, even across a redeploy).
+
+1. Stripe Dashboard → **Developers → Webhooks → Add endpoint**
+   (<https://dashboard.stripe.com/test/webhooks>).
+2. Endpoint URL: `https://your-service.up.railway.app/webhook/stripe`
+3. Under **Select events**, pick:
+   - `checkout.session.completed`
+   - `checkout.session.async_payment_succeeded`
+4. Click **Add endpoint**, then copy the **Signing secret** (`whsec_…`).
+5. In Railway → Variables, add `STRIPE_WEBHOOK_SECRET` = that `whsec_…` value.
+
+How the recovery works: the webhook ties the credit to the **email the buyer
+entered at checkout**. If they never returned from Stripe, they just go to
+`/login`, sign in with that same email, and their report is waiting. One
+payment still yields exactly one report no matter which path records it.
+
+> Test and Live modes have **separate** webhook endpoints and secrets — when
+> you go live (step 6), add the endpoint again in Live mode and update
+> `STRIPE_WEBHOOK_SECRET` with the live `whsec_…`.
+
 ## 5. (Optional) Use saved Prices instead of the inline amounts
 Only if you'd rather manage prices in Stripe's catalog:
 1. **Product catalog → Add product.**
@@ -121,6 +146,7 @@ code?"** on `/app` and skip payment. Codes and Stripe can run at the same time.
 | Variable | Required? | Purpose |
 |----------|-----------|---------|
 | `STRIPE_SECRET_KEY` | for payments | Enables Stripe Checkout |
+| `STRIPE_WEBHOOK_SECRET` | strongly recommended | Verifies `/webhook/stripe` so paid checkouts are recorded even if the buyer never returns from Stripe |
 | `GATE_SECRET` | yes in production | Signs the access cookie |
 | `APP_BASE_URL` | recommended | Public origin for Stripe return URLs |
 | `STRIPE_PRICE_ID` | optional | Catalog Price for the one-time report (else inline $79) |

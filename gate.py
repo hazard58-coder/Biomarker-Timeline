@@ -45,6 +45,10 @@ REPORT_PRICE_CENTS = int(os.environ.get("REPORT_PRICE_CENTS", "7900"))  # $79.00
 SUBSCRIPTION_PRICE_CENTS = int(os.environ.get("SUBSCRIPTION_PRICE_CENTS", "2900"))  # $29.00/mo
 ACCESS_CODES = {c.strip() for c in os.environ.get("ACCESS_CODES", "").split(",") if c.strip()}
 STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "").strip()
+# Webhook signing secret (whsec_...). When set, /webhook/stripe records paid
+# checkouts server-to-server, so a buyer who never returns from Stripe (closed
+# tab, dropped redirect) still gets their report credit.
+STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "").strip()
 STRIPE_PRICE_ID = os.environ.get("STRIPE_PRICE_ID", "").strip()  # one-time Price (optional)
 STRIPE_SUBSCRIPTION_PRICE_ID = os.environ.get("STRIPE_SUBSCRIPTION_PRICE_ID", "").strip()  # recurring Price (optional)
 ACCESS_TTL_SECONDS = int(os.environ.get("ACCESS_TTL_SECONDS", str(2 * 60 * 60)))  # 2 hours
@@ -311,6 +315,22 @@ def customer_id_for_email(email: str) -> str | None:
         return None
     data = _sg(customers, "data") or []
     return _sg(data[0], "id") if data else None
+
+
+def webhook_configured() -> bool:
+    return bool(STRIPE_WEBHOOK_SECRET and STRIPE_SECRET_KEY)
+
+
+def verify_webhook(payload: bytes, sig_header: str):
+    """Verify a Stripe webhook signature and return the parsed event.
+
+    Raises on a bad/missing signature — the caller must reject the request.
+    Verification is what makes the endpoint trustworthy: without it anyone
+    could POST a fake 'paid' event and mint report credits.
+    """
+    import stripe
+
+    return stripe.Webhook.construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
 
 
 def create_billing_portal_session(customer_id: str, return_url: str) -> str:

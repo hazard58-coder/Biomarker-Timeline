@@ -662,6 +662,14 @@ def upload_page() -> Response:
         resp = make_response(_upload_form())
         return _grant_cookie(resp, "stripe", f"acct:{acct.get('cust')}", "sub")
 
+    # Signed-in account holding an unspent report credit — the recovery path for
+    # a buyer whose payment was recorded by the Stripe webhook but who never
+    # made it back through the redirect (closed tab, dropped connection). They
+    # sign in with the email they paid with and their report is waiting.
+    email = _account_email()
+    if email and _entitlement(email):
+        return Response(_upload_form(), mimetype="text/html")
+
     # Otherwise show the paywall. If the visitor's last one-time payment was
     # already used, say so (and clear the spent cookie so it's a clean slate).
     used = _spent_oncetime_cookie()
@@ -669,6 +677,43 @@ def upload_page() -> Response:
     if used:
         resp.delete_cookie(gate.COOKIE_NAME)
     return resp
+
+
+@app.post("/webhook/stripe")
+def stripe_webhook() -> Response:
+    """Server-to-server payment record from Stripe.
+
+    The redirect back to /app is the happy path, but a buyer who closes the tab
+    on Stripe's receipt page never triggers it — before this endpoint, that
+    payment was collected and no credit was ever recorded. Stripe retries
+    webhook delivery for days, so the credit lands even through a redeploy.
+    """
+    if not gate.webhook_configured():
+        return Response("webhook not configured", status=501)
+    try:
+        event = gate.verify_webhook(
+            request.get_data(), request.headers.get("Stripe-Signature", ""))
+    except Exception:
+        app.logger.warning("stripe webhook: bad signature rejected")
+        return Response("bad signature", status=400)
+
+    etype = gate._sg(event, "type") or ""
+    if etype in ("checkout.session.completed",
+                 "checkout.session.async_payment_succeeded"):
+        session = gate._sg(gate._sg(event, "data"), "object")
+        sid = gate._sg(session, "id")
+        details = gate._sg(session, "customer_details")
+        email = (gate._sg(details, "email") if details is not None else None) \
+            or gate._sg(session, "customer_email")
+        if gate._sg(session, "mode") == "payment":
+            if gate._sg(session, "payment_status") == "paid" and sid and email:
+                store.add_credit(sid, email)  # idempotent with the redirect path
+                app.logger.info("stripe webhook: credit recorded for session %s", sid)
+        elif gate._sg(session, "mode") == "subscription" and email:
+            # Stripe stays the source of truth; just drop any cached
+            # "no subscription" so the new subscriber isn't held at the paywall.
+            gate.bust_subscription_cache(email)
+    return Response("ok", mimetype="text/plain")
 
 
 @app.post("/checkout")
@@ -1006,6 +1051,14 @@ def generate() -> Response:
 
     # ---- guest mode: entitlement is the access cookie + one-time session ----
     if not _has_access():
+        # No cookie, but a signed-in account may hold a webhook-recorded credit
+        # or an active subscription (same recovery path as /app above).
+        email = _account_email()
+        ent = _entitlement(email) if email else None
+        if ent == "credit":
+            return _run_report(lambda: store.consume_credit(email, note="report delivered"))
+        if ent:
+            return _run_report(None)
         return redirect("/app", code=303)
     payload = gate.read_token(request.cookies.get(gate.COOKIE_NAME))
     paid_session_id = None
