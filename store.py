@@ -22,30 +22,38 @@ from pathlib import Path
 
 DB_PATH = os.environ.get("ENTITLEMENT_DB", "data/entitlements.db")
 _lock = threading.Lock()
+_schema_ready = False
 
 
 def _connect() -> sqlite3.Connection:
+    global _schema_ready
     path = Path(DB_PATH)
     path.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(str(path), timeout=10, check_same_thread=False)
-    con.execute("PRAGMA journal_mode=WAL;")
-    con.execute(
-        "CREATE TABLE IF NOT EXISTS consumed_sessions ("
-        "  session_id TEXT PRIMARY KEY,"
-        "  consumed_at TEXT NOT NULL,"
-        "  note TEXT"
-        ")"
-    )
-    # Account model: each one-time payment is a report "credit" tied to the
-    # buyer's email. consumed_at is set when a report is delivered for it.
-    con.execute(
-        "CREATE TABLE IF NOT EXISTS credits ("
-        "  session_id TEXT PRIMARY KEY,"
-        "  email TEXT NOT NULL,"
-        "  created_at TEXT NOT NULL,"
-        "  consumed_at TEXT"
-        ")"
-    )
+    # Schema + WAL are one-time properties of the database file. Setting them on
+    # every call added a write and two DDL statements to each request that hits
+    # the store; do it once (callers hold `_lock`, so this flag is safe).
+    if not _schema_ready:
+        con.execute("PRAGMA journal_mode=WAL;")
+        con.execute(
+            "CREATE TABLE IF NOT EXISTS consumed_sessions ("
+            "  session_id TEXT PRIMARY KEY,"
+            "  consumed_at TEXT NOT NULL,"
+            "  note TEXT"
+            ")"
+        )
+        # Account model: each one-time payment is a report "credit" tied to the
+        # buyer's email. consumed_at is set when a report is delivered for it.
+        con.execute(
+            "CREATE TABLE IF NOT EXISTS credits ("
+            "  session_id TEXT PRIMARY KEY,"
+            "  email TEXT NOT NULL,"
+            "  created_at TEXT NOT NULL,"
+            "  consumed_at TEXT"
+            ")"
+        )
+        con.commit()
+        _schema_ready = True
     return con
 
 

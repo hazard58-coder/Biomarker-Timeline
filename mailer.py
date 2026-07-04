@@ -36,7 +36,10 @@ SMTP_STARTTLS = os.environ.get("SMTP_STARTTLS", "1").strip() != "0"
 
 
 def transport() -> str:
-    if RESEND_API_KEY and (MAIL_FROM or True):
+    # Resend only needs the API key: _send_via_resend falls back to
+    # onboarding@resend.dev when MAIL_FROM is unset (so testing works before a
+    # domain is verified). SMTP needs both a host and a From address.
+    if RESEND_API_KEY:
         return "resend-http"
     if SMTP_HOST and MAIL_FROM:
         return "smtp"

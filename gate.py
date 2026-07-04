@@ -222,14 +222,15 @@ def subscription_active(customer_id: str) -> bool:
     import stripe
 
     stripe.api_key = STRIPE_SECRET_KEY
-    for status in ("active", "trialing"):
-        try:
-            subs = stripe.Subscription.list(customer=customer_id, status=status, limit=1)
-        except Exception:
-            return False
-        if _sg(subs, "data"):
-            return True
-    return False
+    # One listing (status="all") instead of one call per status: this runs on the
+    # hot entitlement path (every signed-in request) and inside a per-customer
+    # loop, so halving the round-trips matters.
+    try:
+        subs = stripe.Subscription.list(customer=customer_id, status="all", limit=100)
+    except Exception:
+        return False
+    return any(_sg(s, "status") in ("active", "trialing")
+               for s in (_sg(subs, "data") or []))
 
 
 def find_active_subscription_customer(email: str) -> str | None:

@@ -241,12 +241,15 @@ def extract_document_vision(doc: SourceDocument, fallback_date: date = date.min)
         return []
 
     pages = img_pages[:VISION_MAX_PAGES]
+    # One shared client for every page: the Anthropic client is thread-safe and
+    # keeps an HTTP connection pool, so reusing it across the pool avoids building
+    # a client (and a fresh connection) per page.
+    client = anthropic.Anthropic(api_key=API_KEY, timeout=AI_TIMEOUT)
 
     def _read_page(i: int) -> tuple:
         try:
             png = _render_page_png(doc.path, i, dpi=VISION_DPI)
             b64 = base64.standard_b64encode(png).decode("ascii")
-            client = anthropic.Anthropic(api_key=API_KEY, timeout=AI_TIMEOUT)
             msg = client.messages.create(
                 model=MODEL, max_tokens=4096, system=_VISION_SYSTEM,
                 messages=[{"role": "user", "content": [
