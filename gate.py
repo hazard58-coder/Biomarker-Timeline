@@ -65,8 +65,17 @@ ADMIN_EMAILS = {e.strip().lower() for e in
 def is_admin(email: str | None) -> bool:
     return bool(email) and email.strip().lower() in ADMIN_EMAILS
 _GATE_SECRET = (os.environ.get("GATE_SECRET")
-                or os.environ.get("SECRET_KEY")
-                or "dev-insecure-secret-change-me-in-production")
+                or os.environ.get("SECRET_KEY") or "")
+if not _GATE_SECRET:
+    # A hardcoded fallback secret lives in the public repo, so cookies signed
+    # with it are forgeable by anyone — including the admin account cookie.
+    # A random per-process secret keeps signing safe; the only cost is that
+    # sign-ins/access cookies won't survive a restart until GATE_SECRET is set.
+    import secrets as _secrets
+    _GATE_SECRET = _secrets.token_hex(32)
+    _log.warning(
+        "GATE_SECRET/SECRET_KEY is not set — using a random per-process secret. "
+        "Sessions will not survive a redeploy. Set GATE_SECRET in Railway.")
 
 _serializer = URLSafeTimedSerializer(_GATE_SECRET, salt="biomarker-timeline-access")
 _account_serializer = URLSafeTimedSerializer(_GATE_SECRET, salt="biomarker-timeline-account")
@@ -233,23 +242,52 @@ def subscription_active(customer_id: str) -> bool:
                for s in (_sg(subs, "data") or []))
 
 
+# Subscription lookups hit Stripe on every signed-in pageview (customer list +
+# a subscription check per customer). A short TTL cache removes that latency
+# from the hot path. Positive results are safe to hold longer (a canceled sub
+# stays paid-up until period end anyway); negatives stay short so a brand-new
+# subscriber isn't stuck at the paywall. One gunicorn worker => a dict is fine.
+_SUB_CACHE: dict[str, tuple[float, str | None]] = {}
+_SUB_TTL_HIT = float(os.environ.get("SUB_CACHE_TTL", "300"))
+_SUB_TTL_MISS = 20.0
+
+
+def bust_subscription_cache(email: str) -> None:
+    """Drop the cached result for an email (call right after a new subscription
+    checkout completes, so access is instant)."""
+    _SUB_CACHE.pop((email or "").strip().lower(), None)
+
+
 def find_active_subscription_customer(email: str) -> str | None:
     """Find a Stripe customer with the given email that has an active subscription.
     Returns the customer id, or None. Used for returning-subscriber sign-in."""
     if not email:
         return None
+    import time
+
+    key = email.strip().lower()
+    cached = _SUB_CACHE.get(key)
+    if cached and time.time() < cached[0]:
+        return cached[1]
+
     import stripe
 
     stripe.api_key = STRIPE_SECRET_KEY
     try:
         customers = stripe.Customer.list(email=email.strip(), limit=10)
     except Exception:
-        return None
+        return None  # transient Stripe error: don't cache
+    result = None
     for cust in (_sg(customers, "data") or []):
         cust_id = _sg(cust, "id")
         if subscription_active(cust_id):
-            return cust_id
-    return None
+            result = cust_id
+            break
+    if len(_SUB_CACHE) > 1000:  # bound memory; effectively never at this scale
+        _SUB_CACHE.clear()
+    ttl = _SUB_TTL_HIT if result else _SUB_TTL_MISS
+    _SUB_CACHE[key] = (time.time() + ttl, result)
+    return result
 
 
 def email_has_active_subscription(email: str) -> bool:

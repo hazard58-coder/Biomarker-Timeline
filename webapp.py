@@ -21,6 +21,7 @@ import io
 import re
 import sys
 import tempfile
+import time
 from datetime import date
 from pathlib import Path
 
@@ -49,6 +50,48 @@ logging.basicConfig(level=logging.INFO,
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 40 * 1024 * 1024  # 40 MB total upload cap
 
+
+@app.after_request
+def _security_headers(resp: Response) -> Response:
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("X-Frame-Options", "DENY")
+    resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    # Railway terminates TLS at the proxy, so check the forwarded proto too.
+    if request.is_secure or request.headers.get("X-Forwarded-Proto") == "https":
+        resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000")
+    return resp
+
+
+# /login sends real email on every POST; without a limit it's an open relay for
+# magic-link spam (burning Resend quota and the domain's sending reputation).
+# In-memory is enough: one gunicorn worker, and the worst case after a restart
+# is a fresh window.
+_LOGIN_WINDOW_SECONDS = 15 * 60
+_LOGIN_MAX_PER_WINDOW = 5
+_login_attempts: dict[str, list[float]] = {}
+
+
+def _login_rate_limited(*keys: str) -> bool:
+    now = time.time()
+    if len(_login_attempts) > 5000:  # bound memory under address-rotation abuse
+        _login_attempts.clear()
+    limited = False
+    for key in keys:
+        if not key:
+            continue
+        recent = [t for t in _login_attempts.get(key, [])
+                  if now - t < _LOGIN_WINDOW_SECONDS]
+        if len(recent) >= _LOGIN_MAX_PER_WINDOW:
+            limited = True
+        recent.append(now)
+        _login_attempts[key] = recent
+    return limited
+
+
+def _client_ip() -> str:
+    fwd = request.headers.get("X-Forwarded-For", "")
+    return (fwd.split(",")[0].strip() if fwd else request.remote_addr) or ""
+
 LANDING = ROOT / "landing.html"
 SAMPLE = ROOT / "samples" / "Marcus_Hale_Biomarker_Timeline_SAMPLE.pdf"
 
@@ -59,6 +102,7 @@ _HEAD = """<!DOCTYPE html><html lang="en"><head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>{title}</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%230E0F12'/%3E%3Cpath d='M12 44 L26 30 L36 38 L52 20' stroke='%23B87333' stroke-width='6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"/>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=Oswald:wght@600;700&display=swap" rel="stylesheet">
@@ -560,7 +604,10 @@ def _app_account_mode() -> Response:
                 "receipt."), mimetype="text/html", status=503)
         if info["active"] and info["plan"] == "once":
             store.add_credit(session_id, email)  # one report credit for this account
-        # subscriptions need no local record — Stripe is the source of truth
+        elif info["active"] and info["plan"] == "sub":
+            # Stripe is the source of truth; just drop the cached "no subscription"
+            # so the brand-new subscriber gets access on this very request.
+            gate.bust_subscription_cache(email)
 
     if not email:
         return Response(_signin_form(start=True), mimetype="text/html")
@@ -664,6 +711,10 @@ def login() -> Response:
         return Response(_signin_form("Please enter a valid email address.",
                                      start=gate.LOGIN_REQUIRED),
                         mimetype="text/html", status=400)
+    if _login_rate_limited(f"em:{email.lower()}", f"ip:{_client_ip()}"):
+        return Response(_signin_form(
+            "Too many sign-in requests. Please wait a few minutes and try again.",
+            start=gate.LOGIN_REQUIRED), mimetype="text/html", status=429)
 
     link = f"{_base_url()}/verify?token={gate.issue_magic_token(email)}"
 
